@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应启动图标：米纸底色 + 展开的书页 + 朱砂印章。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 左书页 -->
+    <path
+        android:fillColor="#2A2118"
+        android:pathData="M54,38 C48,32 38,29 28,31 C26,31.5 25,33 25,35 L25,73 C25,75.5 27,77 29.5,76.5 C38,75 47,77 54,82 Z" />
+    <!-- 右书页 -->
+    <path
+        android:fillColor="#2A2118"
+        android:pathData="M54,38 C60,32 70,29 80,31 C82,31.5 83,33 83,35 L83,73 C83,75.5 81,77 78.5,76.5 C70,75 61,77 54,82 Z" />
+    <!-- 内页留白 -->
+    <path
+        android:fillColor="#F5E6C8"
+        android:pathData="M54,43 C49,38.5 41,36 33,37.5 L33,70.5 C41,69 49,71 54,75 Z" />
+    <path
+        android:fillColor="#F5E6C8"
+        android:pathData="M54,43 C59,38.5 67,36 75,37.5 L75,70.5 C67,69 59,71 54,75 Z" />
+    <!-- 朱砂印章 -->
+    <path
+        android:fillColor="#9C4A2F"
+        android:pathData="M58,52 L70,52 L70,63 L58,63 Z" />
+    <path
+        android:fillColor="#F5E6C8"
+        android:pathData="M61,55 L67,55 L67,56.5 L61,56.5 Z M61,58 L67,58 L67,59.5 L61,59.5 Z" />
+</vector>

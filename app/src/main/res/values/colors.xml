@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="paper">#F7F2E7</color>
+    <color name="paper_deep">#EFE6D4</color>
+    <color name="ink">#211D18</color>
+    <color name="ink_soft">#6B6255</color>
+    <color name="cinnabar">#9C4A2F</color>
+    <color name="launcher_background">#EFE3C8</color>
+</resources>

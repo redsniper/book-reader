@@ -1,0 +1,23 @@
+# 工具链与构建产物（本机 SDK 路径不入库）
+.toolchain/
+.gradle-home/
+local.properties
+.gradle/
+build/
+app/build/
+captures/
+*.iml
+.idea/
+.DS_Store
+# 测试/调试产物
+*.hprof
+
+# 按仓库要求：测试源码不纳入 Git 跟踪（仍保留在本地工作区）
+app/src/test/
+app/src/androidTest/
+
+# 本地工具/环境
+.claude/
+
+# 构建日志
+*.log
