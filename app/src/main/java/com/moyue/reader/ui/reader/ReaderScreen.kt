@@ -60,6 +60,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -231,8 +232,13 @@ fun ReaderScreen(
                 fontFamily = settings.fontFamily,
             )
 
-            LaunchedEffect(viewport) {
-                viewModel.onViewportMeasured(viewport)
+            // 加载期间页面用的是默认设置，此时的视口不能拿去分页；等状态进入
+            // Paginating/Ready 并携带真实 settings 后，再用同一帧计算出的视口
+            // 触发第一次排版。这样非默认字号的书打开时只排一次，不会先按默认
+            // 字号排一次再用页起点衔接真实字号，导致阅读位置向前跳。
+            val isLoading = state is ReaderUiState.Loading
+            LaunchedEffect(viewport, isLoading) {
+                if (!isLoading) viewModel.onViewportMeasured(viewport)
             }
 
             Box(
@@ -364,13 +370,20 @@ fun ReaderScreen(
         }
 
         if (showSettings) {
+            // 设置面板固定为全展开：面板内含实时预览卡片，字号/行距滑动的每一步都会
+            // 改变预览高度；若允许半展开锚点，Material3 会因内容高度变化重算锚点并把
+            // 面板塌回半屏（表现为“拖字号时整屏重置”）。固定全展开后锚点不再随内容
+            // 高度变化，用户也不会在首次打开时只看到半屏设置。
+            val settingsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             ModalBottomSheet(
                 onDismissRequest = { showSettings = false },
+                sheetState = settingsSheetState,
                 containerColor = Color(0xFFFCF8F0),
             ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
+                        .fillMaxHeight(0.9f)
                         .verticalScroll(rememberScrollState())
                         .navigationBarsPadding()
                         .padding(horizontal = 24.dp)
@@ -1111,6 +1124,7 @@ private fun ReaderError.messageRes(): Int = when (this) {
 private fun ReaderUiState.settingsOrDefault(): ReaderSettings = when (this) {
     is ReaderUiState.Ready -> settings
     is ReaderUiState.PdfReady -> settings
+    is ReaderUiState.Paginating -> settings
     is ReaderUiState.Error -> settings
     else -> ReaderSettings()
 }

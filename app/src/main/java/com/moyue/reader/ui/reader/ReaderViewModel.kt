@@ -75,6 +75,15 @@ sealed interface ReaderUiState {
     data class Paginating(
         val book: Book,
         val progress: Float,
+        /**
+         * 已从 DataStore 读出的真实阅读设置。
+         *
+         * 必须随状态一起发布：加载过程中页面仍会用默认设置绘制，如果这里不携带
+         * 用户设置，ReaderScreen 会按默认字号测量视口并触发一次错误排版，等
+         * Ready 再按真实字号重排。两次排版之间用“页起点”衔接会丢掉页内字符
+         * 偏移，表现为重开非默认字号的书时阅读位置向前跳。
+         */
+        val settings: ReaderSettings = ReaderSettings(),
     ) : ReaderUiState
 
     data class Ready(
@@ -307,8 +316,13 @@ class ReaderViewModel(
                         ),
                     )
                     savedAnchor = resolveAnchor(progress)
-                    _uiState.value = ReaderUiState.Paginating(loadedBook, 0f)
-                    if (viewport != null) startPagination()
+                    // 关键：丢弃 Loading 阶段按默认设置测到的视口。否则这里会先用
+                    // 默认字号排一次，Ready 后再按用户字号排第二次；第二次只能以
+                    // 第一次的“页起点”为锚点，页内偏移丢失，重开非默认字号的书
+                    // 会看到进度向前跳。置空后由 ReaderScreen 在拿到真实 settings
+                    // 的下一帧重新测量，整个打开过程只排一次。
+                    viewport = null
+                    _uiState.value = ReaderUiState.Paginating(loadedBook, 0f, settings)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -396,7 +410,7 @@ class ReaderViewModel(
                 settings = settings,
             )
         } else {
-            _uiState.value = ReaderUiState.Paginating(currentBook, 0f)
+            _uiState.value = ReaderUiState.Paginating(currentBook, 0f, snapshotSettings)
         }
 
         paginationJob = viewModelScope.launch {

@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moyue.reader.R
@@ -59,7 +60,9 @@ import kotlin.math.roundToInt
  *
  * 交互策略：
  * - 主题、翻页模式、字体族即时应用；
- * - 字号/行距/边距拖动时只更新本地预览，松手后一次性应用，避免连续重排整本书。
+ * - 字号/行距/边距拖动时只更新本地预览，松手后一次性应用，避免连续重排整本书；
+ * - 滑块本身不设离散刻度：拖动时连续跟手，落地时再按 1sp / 0.1× / 1dp 取整。
+ *   若保留 Material3 的 steps，指针会在数十个刻度间跳动，观感明显发涩。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -151,7 +154,6 @@ fun ReadingSettingsControls(
             ),
             value = draft.fontSizeSp,
             range = ReaderSettings.MIN_FONT_SIZE_SP..ReaderSettings.MAX_FONT_SIZE_SP,
-            steps = 17,
             onChange = { draft = draft.copy(fontSizeSp = it) },
             onFinished = { onSettingsChange(draft) },
         )
@@ -164,7 +166,6 @@ fun ReadingSettingsControls(
             ),
             value = draft.lineHeightMultiplier,
             range = ReaderSettings.MIN_LINE_HEIGHT..ReaderSettings.MAX_LINE_HEIGHT,
-            steps = 11,
             onChange = { draft = draft.copy(lineHeightMultiplier = it) },
             onFinished = { onSettingsChange(draft) },
         )
@@ -177,7 +178,6 @@ fun ReadingSettingsControls(
             ),
             value = draft.horizontalPaddingDp.toFloat(),
             range = ReaderSettings.MIN_PADDING_DP.toFloat()..ReaderSettings.MAX_PADDING_DP.toFloat(),
-            steps = 11,
             onChange = { draft = draft.copy(horizontalPaddingDp = it.roundToInt()) },
             onFinished = { onSettingsChange(draft) },
         )
@@ -197,13 +197,18 @@ private fun SettingLabel(text: String) {
 @Composable
 private fun ReaderPreview(settings: ReaderSettings) {
     val palette = settings.theme.palette()
+    // 预览卡片必须使用固定高度：字号/行距变化会改变文字自身高度，如果卡片随内容
+    // 伸缩，下方所有滑块都会在拖动过程中上下移动，拇指追不上手指，表现为“拖字号
+    // 发涩”。固定成一张小页面后，卡片内部字号实时变化，外部布局纹丝不动。
     Box(
         Modifier
             .fillMaxWidth()
+            .height(PREVIEW_HEIGHT)
             .clip(RoundedCornerShape(10.dp))
             .background(palette.background)
             .border(1.dp, palette.text.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.CenterStart,
     ) {
         Text(
             text = stringResource(R.string.reader_settings_preview),
@@ -212,6 +217,9 @@ private fun ReaderPreview(settings: ReaderSettings) {
             fontSize = (settings.fontSizeSp * 0.8f).sp,
             lineHeight = (settings.fontSizeSp * 0.8f * settings.lineHeightMultiplier).sp,
             maxLines = 2,
+            // 极限字号 + 极限行距可能超出小卡片；省略号比截断半行更体面，
+            // 也不影响用户根据实际正文判断效果。
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -259,7 +267,6 @@ private fun SliderSetting(
     valueText: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
-    steps: Int,
     onChange: (Float) -> Unit,
     onFinished: () -> Unit,
 ) {
@@ -276,7 +283,7 @@ private fun SliderSetting(
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = onChange,
             valueRange = range,
-            steps = steps,
+            // 不使用 steps：拖动时连续跟手，落地的取整交给 ReaderSettings.sanitized()。
             onValueChangeFinished = onFinished,
             colors = SliderDefaults.colors(
                 thumbColor = Cinnabar,
@@ -286,3 +293,6 @@ private fun SliderSetting(
         )
     }
 }
+
+/** 预览卡片固定高度：见 [ReaderPreview] 中关于“滑块跟手”的说明。 */
+private val PREVIEW_HEIGHT = 132.dp

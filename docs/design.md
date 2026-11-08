@@ -660,6 +660,7 @@ interface PageIndexCache {
   - **分屏/自由窗口**：使用 `WindowInsets.safeDrawing`（系统栏由系统保留），窗口尺寸变化属于真实排版变化。
   - 字号与行高由正文 `Text` 使用同一个 `LocalDensity` 解析：`settings.fontSizeSp.sp.toPx()` 与 `(settings.fontSizeSp × lineHeightMultiplier).sp.toPx()`，再随 `ReaderViewport` 传给分页器。**禁止**在 ViewModel 里手算 `sp × density × fontScale`：Android 14+ 的系统字体缩放是非线性的，手算会与渲染字号不一致，造成大字号下半屏空白。
   - `ReaderViewModel` 只由 `onViewportMeasured` 驱动重排；`applySettings` 仅更新状态，避免一次设置变更触发两次分页。主题/翻页模式不改变视口或字号，因此不重排。
+  - **首开只排一次**：加载阶段页面还没有真实设置，此时的视口不能用于分页。设置读取完成后，`Paginating` 状态必须携带真实 `ReaderSettings`，`ReaderScreen` 用同一帧的 `LocalDensity` 重新测量并只触发一次分页；`ReaderViewModel` 在进入 `Paginating` 前丢弃 Loading 阶段的视口。否则会先按默认字号排一套索引，再按用户字号排第二套；第二套只能以第一套的“页起点”为锚点，页内字符偏移丢失，表现为重开非默认字号（或刚改完字号）时阅读位置向前跳。
 - 签名只包含会影响页边界的输入。主题、左右/上下翻页模式不改变字符页边界，因此不参与签名，也不触发重排。
 - `ReaderViewModel` 在分页前先按签名查缓存：
   - **命中**：反序列化页区间，配合当前章节重建 `ReaderPageIndex`，直接按字符锚点恢复位置，跳过 `PageBreaker`；
@@ -735,7 +736,7 @@ class ReaderPageIndex(
 - 顶部栏：返回、书名（单行省略）、目录。
 - 底部栏：进度百分比、章节位置、全局页码、跳页按钮、阅读设置（Aa）。
 - 目录：`ModalBottomSheet`，LazyColumn 展示章节标题与序号；当前章节高亮，点击跳转并关闭；显示章节总数。
-- 设置面板：`ModalBottomSheet`，包含主题、翻页方式、字体、字号、行距、边距；带实时预览小卡片。字号/行距在滑动结束（`onValueChangeFinished`）后应用并重排；主题立即生效。
+- 设置面板：`ModalBottomSheet`，固定全展开（`skipPartiallyExpanded = true`），包含主题、翻页方式、字体、字号、行距、边距；带实时预览小卡片。预览卡片使用固定高度，字号/行距变化只作用于卡片内部文字，避免拖动时预览高度变化推动下方滑块。字号/行距/边距滑块不设离散刻度，拖动时连续跟手、只更新本地预览；松手后在 `onValueChangeFinished` 按 1sp / 0.1× / 1dp 取整应用并重排一次；主题立即生效。固定全展开 + 固定预览高度保证拖动过程中面板锚点、滑块和下方控件不发生位移。
 - 错误/加载状态：全屏加载动画带百分比；错误页提供"返回书架"与"重试"（锁定错误页只保留"返回书架"）。
 
 ### 12.2 ReaderViewModel 状态
@@ -743,7 +744,12 @@ class ReaderPageIndex(
 ```kotlin
 sealed interface ReaderUiState {
     data object Loading : ReaderUiState
-    data class Paginating(val book: Book, val progress: Float) : ReaderUiState
+    data class Paginating(
+        val book: Book,
+        val progress: Float,
+        // 必须携带已读取的真实设置，供 ReaderScreen 在首帧按正确字号测量视口。
+        val settings: ReaderSettings,
+    ) : ReaderUiState
     data class Ready(
         val book: Book,
         val pageIndex: ReaderPageIndex,
@@ -981,7 +987,8 @@ stateDiagram-v2
 10. 删除：数据库、章节、正文、进度、源文件、封面全部清除。
 11. 下拉：阈值以下不触发，超过阈值仅触发一次；不在顶部时不累计。
 12. 设置：非法值回退；DataStore 持久化；主题切换不重排、字号切换重排。
-13. 会话：隐藏阅读中锁定会话→阅读器立即进入锁定错误页并保存进度；隐藏书架锁定→退回普通书架并显示锁定提示；普通书不受影响；配置变更不误锁。
+13. 首开时序：Loading 阶段按默认字号测到的视口被丢弃；`Paginating` 携带真实设置；只有一次分页，非默认字号重开位置与关闭前一致。
+14. 会话：隐藏阅读中锁定会话→阅读器立即进入锁定错误页并保存进度；隐藏书架锁定→退回普通书架并显示锁定提示；普通书不受影响；配置变更不误锁。
 
 ---
 
