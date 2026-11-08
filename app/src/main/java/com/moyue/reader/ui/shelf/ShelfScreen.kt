@@ -4,6 +4,11 @@ import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -19,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -65,7 +71,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,12 +81,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -86,6 +98,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -115,6 +128,8 @@ import com.moyue.reader.ui.theme.Paper
 import com.moyue.reader.ui.theme.PaperDeep
 import com.moyue.reader.ui.theme.PaperLine
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * 书架主界面。
@@ -179,9 +194,52 @@ fun ShelfScreen(
         PullDownUnlockDetector.DEFAULT_THRESHOLD_DP.dp.toPx()
     }
     val detector = remember(thresholdPx) { PullDownUnlockDetector(thresholdPx) }
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    // 隐藏书架首次数据到达后的淡入上浮进度；1 表示完全显示。
+    val reveal = remember { Animatable(1f) }
+    // 用 rememberSaveable 记录模式与待播放转场：从隐藏阅读器返回时导航会重建本页，
+    // 只有“普通书架 -> 隐藏书架”的真实切换才应播放一次进入转场。
+    var lastModeName by rememberSaveable { mutableStateOf(state.mode.name) }
+    var entryAnimationPending by rememberSaveable { mutableStateOf(false) }
+    // 位移与进度只在布局/绘制阶段读取，拖动时不会触发整页重组；
+    // armed 是布尔值，只在越过/退出阈值时改变一次，重组代价可以忽略。
+    var pullOffset by remember { mutableFloatStateOf(0f) }
     var pullProgress by remember { mutableFloatStateOf(0f) }
+    var pullArmed by remember { mutableStateOf(false) }
+    // 提示层只在拖动/回弹期间参与组合：静止时连同无障碍语义一起移除，避免读屏
+    // 在普通书架上读出“继续下拉进入隐藏书架”。
+    var pullVisible by remember { mutableStateOf(false) }
+    var settleJob by remember { mutableStateOf<Job?>(null) }
     val gridState = rememberLazyGridState()
     val currentMode by rememberUpdatedState(state.mode)
+
+    /**
+     * 松手后的回弹。
+     *
+     * 使用 Compose 的帧时钟驱动单个浮点状态，避免为每个拖动事件创建协程；
+     * 回弹期间若再次下拉，调用方会取消该任务，由状态机按新的手势位移接管。
+     */
+    fun settlePull() {
+        if (pullOffset <= 0f) {
+            pullProgress = 0f
+            pullArmed = false
+            pullVisible = false
+            return
+        }
+        settleJob?.cancel()
+        settleJob = scope.launch {
+            animate(
+                initialValue = pullOffset,
+                targetValue = 0f,
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
+            ) { value, _ -> pullOffset = value }
+            pullOffset = 0f
+            pullProgress = 0f
+            pullArmed = false
+            pullVisible = false
+        }
+    }
 
     val nestedScrollConnection = remember(detector, gridState, viewModel) {
         object : NestedScrollConnection {
@@ -194,31 +252,93 @@ fun ShelfScreen(
                 if (source != NestedScrollSource.UserInput) return Offset.Zero
                 val atTop = gridState.firstVisibleItemIndex == 0 &&
                     gridState.firstVisibleItemScrollOffset == 0
-                val triggered = detector.onOverscroll(available.y, atTop)
-                pullProgress = detector.progress
-                if (triggered) {
-                    pullProgress = 0f
-                    viewModel.onPullDownTriggered()
+                val wasArmed = detector.isArmed
+                if (!detector.onDrag(available.y, atTop)) {
+                    // 离开顶部或反向滚动：把已经拉出的内容弹回去。
+                    if (pullOffset > 0f) settlePull()
+                    return Offset.Zero
                 }
-                return Offset.Zero
+
+                // 手指重新接管时，必须停止上一次回弹，避免两个动画争抢位移。
+                settleJob?.cancel()
+                pullVisible = true
+                pullProgress = detector.progress
+                pullOffset = detector.visualOffsetPx
+                // 无条件同步：回弹任务被取消时 completion 不会执行，若只在越过阈值时
+                // 赋值，重新下拉会残留“松开进入”的开锁态。
+                pullArmed = detector.isArmed
+                if (!wasArmed && detector.isArmed) {
+                    // 只在“刚刚越过阈值”的那一帧震动，按住不放不会连续震。
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+                // 消费掉 overscroll，避免系统拉伸效果与自定义位移叠加。
+                return Offset(0f, available.y)
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                detector.reset()
-                pullProgress = 0f
+                if (currentMode != ShelfMode.NORMAL) {
+                    detector.reset()
+                    return Velocity.Zero
+                }
+                val trigger = detector.onRelease()
+                settlePull()
+                if (trigger) viewModel.onPullDownTriggered()
                 return Velocity.Zero
             }
 
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                detector.reset()
-                pullProgress = 0f
+                // 兜底：极少数输入路径只派发 postFling，避免 ARMED 状态悬挂。
+                if (currentMode == ShelfMode.NORMAL && detector.isArmed) {
+                    val trigger = detector.onRelease()
+                    settlePull()
+                    if (trigger) viewModel.onPullDownTriggered()
+                } else {
+                    detector.reset()
+                    // 兜底收敛残留下拉位移，避免异常输入路径把内容永久推下去；
+                    // 若 preFling 已经启动回弹则不重复启动，防止动画从半途重新计时。
+                    if (settleJob?.isActive != true) settlePull()
+                }
                 return Velocity.Zero
             }
         }
     }
 
     LaunchedEffect(state.mode) {
+        // 模式切换时立即收敛所有下拉/回弹状态，避免隐藏书架上残留位移。
+        settleJob?.cancel()
+        settleJob = null
+        detector.reset()
+        pullOffset = 0f
+        pullProgress = 0f
+        pullArmed = false
+        pullVisible = false
         gridState.scrollToItem(0)
+    }
+
+    // 只在模式真实切换时标记待播放转场；导航重建（如从隐藏阅读器返回）不会误触发。
+    LaunchedEffect(state.mode) {
+        if (state.mode == ShelfMode.HIDDEN && lastModeName == ShelfMode.NORMAL.name) {
+            entryAnimationPending = true
+        }
+        if (state.mode == ShelfMode.NORMAL) {
+            entryAnimationPending = false
+            reveal.snapTo(1f)
+        }
+        lastModeName = state.mode.name
+    }
+
+    // 隐藏书架首批数据到达后再播放转场：验证前列表为空，不会预渲染任何隐藏书籍。
+    LaunchedEffect(state.mode, state.loading, entryAnimationPending) {
+        if (state.mode == ShelfMode.HIDDEN && !state.loading && entryAnimationPending) {
+            reveal.snapTo(0f)
+            reveal.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+            )
+            // 必须在动画结束后再清标记：它是本 effect 的 key，提前清会取消正在播放的
+            // 动画，导致隐藏书架停在半透明状态。
+            entryAnimationPending = false
+        }
     }
 
     Scaffold(
@@ -272,11 +392,27 @@ fun ShelfScreen(
                 )
 
                 Box(Modifier.weight(1f)) {
+                    // 提示层必须画在网格下面：网格下移后才露出来，静止时不参与组合。
+                    if (state.mode == ShelfMode.NORMAL && pullVisible) {
+                        PullDownBackdrop(
+                            progress = { pullProgress },
+                            armed = pullArmed,
+                            offsetPx = { pullOffset },
+                            modifier = Modifier.align(Alignment.TopCenter),
+                        )
+                    }
+
                     LazyVerticalGrid(
                         state = gridState,
                         columns = GridCells.Adaptive(minSize = 148.dp),
                         modifier = Modifier
                             .fillMaxSize()
+                            .offset { IntOffset(0, pullOffset.roundToInt()) }
+                            .graphicsLayer {
+                                // 转场只影响绘制，不改变布局，避免首帧隐藏列表跳动。
+                                alpha = 0.12f + 0.88f * reveal.value
+                                translationY = (1f - reveal.value) * 18.dp.toPx()
+                            }
                             .nestedScroll(nestedScrollConnection),
                         contentPadding = PaddingValues(
                             start = 20.dp,
@@ -338,14 +474,6 @@ fun ShelfScreen(
                         )
                     }
 
-                    if (state.mode == ShelfMode.NORMAL) {
-                        PullDownIndicator(
-                            progress = pullProgress,
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 78.dp),
-                        )
-                    }
                 }
             }
 
@@ -692,51 +820,58 @@ private fun HiddenEmptyState() {
     }
 }
 
+/**
+ * 下拉解锁的顶部提示层。
+ *
+ * 它位于网格下方，网格未下移时完全透明；随着下拉距离增大，锁形圆环逐渐显露并放大。
+ * `progress`/`offsetPx` 使用 lambda 传递，让状态读取发生在绘制阶段，
+ * 手指拖动时只重绘这一层，不会重组整个书架。
+ */
 @Composable
-private fun PullDownIndicator(progress: Float, modifier: Modifier = Modifier) {
-    AnimatedVisibility(visible = progress > 0.03f, modifier = modifier) {
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = Paper.copy(alpha = 0.96f),
-            shadowElevation = 2.dp,
-        ) {
-            Row(
-                Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Outlined.Lock,
-                    contentDescription = null,
-                    tint = Cinnabar,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier
-                        .width(70.dp)
-                        .height(3.dp)
-                        .clip(CircleShape)
-                        .background(PaperLine),
-                ) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth(progress)
-                            .height(3.dp)
-                            .background(Cinnabar),
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (progress >= 1f) {
-                        stringResource(R.string.shelf_pull_release)
-                    } else {
-                        stringResource(R.string.shelf_pull_hint)
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = InkSoft,
-                )
-            }
+private fun PullDownBackdrop(
+    progress: () -> Float,
+    armed: Boolean,
+    offsetPx: () -> Float,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .padding(top = 4.dp)
+            .graphicsLayer {
+                val offset = offsetPx()
+                val value = progress()
+                // 网格刚挪开几像素时淡入，避免静止状态透出提示层。
+                alpha = (offset / 28.dp.toPx()).coerceIn(0f, 1f)
+                scaleX = 0.74f + 0.26f * value
+                scaleY = 0.74f + 0.26f * value
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+                progress = progress,
+                modifier = Modifier.fillMaxSize(),
+                color = if (armed) Cinnabar else Cinnabar.copy(alpha = 0.72f),
+                trackColor = PaperLine,
+                strokeWidth = 3.dp,
+                strokeCap = StrokeCap.Round,
+            )
+            Icon(
+                imageVector = if (armed) Icons.Outlined.LockOpen else Icons.Outlined.Lock,
+                contentDescription = null,
+                tint = if (armed) Cinnabar else InkSoft,
+                modifier = Modifier.size(19.dp),
+            )
         }
+        Spacer(Modifier.height(7.dp))
+        Text(
+            text = stringResource(
+                if (armed) R.string.shelf_pull_release else R.string.shelf_pull_hint,
+            ),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (armed) Cinnabar else InkSoft,
+            letterSpacing = 0.4.sp,
+        )
     }
 }
 
