@@ -12,6 +12,38 @@
 | 启动 Activity | `com.moyue.reader.debug/com.moyue.reader.MainActivity` |
 | 数据 | TXT、EPUB、文本型 PDF、扫描版 PDF 各准备 1 本；另准备 1 个损坏文件 |
 
+### 1.0 本机已配置环境（2026-11-08）
+
+本机已装好模拟器、应用与测试数据，可直接从第 2 节开始执行。当前状态：
+
+| 项目 | 实际配置 |
+| --- | --- |
+| AVD | `moyue_api35`（Pixel 8 Pro 参数：1344×2992 @ 480dpi，4 GB RAM） |
+| 系统镜像 | `system-images;android-35;default;x86_64`（Android 15 / API 35，AOSP 镜像） |
+| 模拟器 | Android Emulator 37.2.13，Hypervisor.Framework 加速 |
+| 应用 | `com.moyue.reader.debug` 已安装，数据已清空，书架为空态 |
+| 测试数据 | 已推送至 `/sdcard/Download`（清单见 1.3） |
+
+应用完全离线，AOSP 镜像不含 Google Play 服务也不影响任何用例；选择 `default`
+而非 `google_apis` 镜像可减少约 900 MB 下载与磁盘占用。
+
+AVD 放在仓库内 `.android-home/`（已 gitignore），环境脚本通过 `ANDROID_AVD_HOME`
+定位，不会修改你的 `HOME`。命令行操作前先载入本机环境脚本：
+
+```bash
+. .toolchain/blackbox-fixtures/env.sh
+start_emulator      # 启动 moyue_api35 并处理日志
+wait_boot           # 等待开机完成
+install_app         # adb install -r app-debug.apk 并启动应用
+push_fixtures       # 重新推送 1.3 的全部测试数据
+```
+
+> 模拟器窗口关闭后重新执行 `start_emulator` 即可；应用与测试数据保存在 AVD 磁盘中。
+
+冒烟验证（2026-11-08）：TXT、EPUB、文本型 PDF、扫描版 PDF 各导入 1 本均成功
+（书名/作者推断、EPUB 封面、扫描版 1/5 页与“保留原始版式”提示均符合预期），
+随后已 `pm clear` 清空应用数据、恢复空书架。**BB-01～BB-20 仍待逐项执行并记录结果。**
+
 ### 1.1 模拟器启动（推荐 Android Studio）
 
 1. 打开 Android Studio → **Device Manager** → **Create Virtual Device**。
@@ -24,24 +56,55 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
 ```
 
-### 1.2 命令行模拟器（可选）
+### 1.2 命令行模拟器（已配置，可直接使用）
+
+本机搭建方式记录如下（日常只需 `start_emulator`，不需要重复创建）：
 
 ```bash
-sdkmanager "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
-avdmanager create avd -n moyue_api35 -k "system-images;android-35;google_apis;x86_64" -d pixel_8
-emulator -avd moyue_api35
+sdkmanager "platform-tools" "emulator" "system-images;android-35;default;x86_64"
+
+# 注意：本机 cmdline-tools 19.0 的 avdmanager 无法解析该 SDK 布局，
+# 会报 “Can't locate Android SDK installation directory for the AVD .ini file”，
+# 因此 AVD 配置为手工写入（参数等价于 Pixel 8 Pro + API 35）：
+#   .android-home/.android/avd/moyue_api35.avd/config.ini
+#   .android-home/.android/avd/moyue_api35.ini
 ```
 
-### 1.3 推送测试文件
+启动与安装：
 
 ```bash
-adb push 第一章测试.txt /sdcard/Download/
-adb push 测试书.epub /sdcard/Download/
-adb push 文本版.pdf   /sdcard/Download/
-adb push 扫描版.pdf   /sdcard/Download/
+. .toolchain/blackbox-fixtures/env.sh
+start_emulator
+wait_boot
+install_app
 ```
 
-应用内导入时，在系统文件选择器左上角菜单选择 **Downloads**。
+### 1.3 测试文件清单（已推送）
+
+`/sdcard/Download/` 已包含以下文件；系统选择器默认停在 **Recent**，可直接看到。
+
+| 文件 | 用途 |
+| --- | --- |
+| `剑来 作者：烽火戏诸侯.txt`（22 KB，6 章） | BB-01 书名/作者推断；BB-06 进度；BB-07 跳章；BB-09/10/11 排版与主题 |
+| `第一章测试.txt`（7 KB，2 章） | BB-01 步骤中引用的文件名 |
+| `测试书.epub`（39 KB，6 章 + 封面） | BB-02 目录与封面；BB-07 跳章 |
+| `无封面测试书.epub`（9 KB） | BB-02 无封面时生成“纸书”封面 |
+| `文本版.pdf`（12 页，可选中文字） | BB-03 文本 PDF 重排；目录来自提取文字 |
+| `扫描版.pdf`（5 页，纯图像，无文字层） | BB-03 扫描版降级，页数 = PDF 页数 |
+| `长夜行 百万字.txt`（3.0 MB，约 102 万字） | BB-20 长书排版与翻页性能 |
+| `边界文件/空文件.txt` | BB-18 空文件 |
+| `边界文件/纯空白.txt` | BB-18 无有效文字 |
+| `边界文件/GBK编码 作者：佚名.txt` | 编码探测（GB18030，预期正常导入） |
+| `边界文件/损坏.epub` | BB-04 / BB-18 损坏文件 |
+| `边界文件/加密.pdf` | BB-18 需要密码的 PDF |
+| `边界文件/不支持.mobi` | BB-04 不支持的扩展名 |
+
+重新推送：
+
+```bash
+. .toolchain/blackbox-fixtures/env.sh
+push_fixtures
+```
 
 ### 1.4 测试数据准备建议
 
@@ -50,6 +113,14 @@ adb push 扫描版.pdf   /sdcard/Download/
 - **文本型 PDF**：由 Word / WPS / LaTeX 导出的可选中文字的 PDF。
 - **扫描版 PDF**：将图片打印为 PDF，或用扫描 App 生成；在电脑上尝试选中文字应无效。
 - **损坏文件**：把任意非文本文件改名为 `bad.txt`（或空文件）。
+
+以上数据已按本节建议生成，生成脚本为 `.toolchain/blackbox-fixtures/generate.py`
+（本机工具，不入库）。如需重新生成并推送：
+
+```bash
+.toolchain/venv/bin/python .toolchain/blackbox-fixtures/generate.py
+. .toolchain/blackbox-fixtures/env.sh && push_fixtures
+```
 
 ---
 
@@ -349,9 +420,15 @@ adb logcat -d | grep -iE "moyue|AndroidRuntime|FATAL"
 # 查看私有文件
 adb shell run-as com.moyue.reader.debug ls -R files/books
 
-# 查看数据库（可将 db 拉出后用 sqlite3 打开）
-adb shell run-as com.moyue.reader.debug cp databases/moyue.db /sdcard/Download/
-adb pull /sdcard/Download/moyue.db
+# 查看数据库（Room 默认 WAL：必须同时导出 .db-wal/.db-shm，否则会丢数据）
+# 注意：`run-as ... cp` 写 /sdcard 会 Permission denied（应用无公共存储权限），
+# 改用 exec-out 重定向到电脑本地。
+adb shell am force-stop com.moyue.reader.debug
+mkdir -p /tmp/moyue-db && cd /tmp/moyue-db
+adb exec-out run-as com.moyue.reader.debug cat databases/moyue.db     > moyue.db
+adb exec-out run-as com.moyue.reader.debug cat databases/moyue.db-wal > moyue.db-wal
+adb exec-out run-as com.moyue.reader.debug cat databases/moyue.db-shm > moyue.db-shm
+sqlite3 moyue.db "select id, title, format, hidden from books;"
 
 # 卸载（清除所有书籍、设置与密码）
 adb uninstall com.moyue.reader.debug
