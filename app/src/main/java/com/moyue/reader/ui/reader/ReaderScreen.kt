@@ -21,8 +21,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.exclude
-import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -191,6 +190,15 @@ fun ReaderScreen(
         }
     }
 
+    // 阅读器全屏时系统栏由本页主动隐藏，栏的临时显隐（含软键盘带出状态栏）
+    // 不应改变分页视口；分屏/自由窗口下系统栏由系统保留，才需要安全区。
+    val isMultiWindow = (context as? Activity)?.isInMultiWindowMode == true
+    val readerWindowInsets = if (isMultiWindow) {
+        WindowInsets.safeDrawing
+    } else {
+        // 只避让物理挖孔，不避让可隐藏的状态栏/导航栏，也不避让 IME。
+        WindowInsets.displayCutout
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -199,10 +207,7 @@ fun ReaderScreen(
         BoxWithConstraints(
             Modifier
                 .fillMaxSize()
-                // 只避让系统栏与刘海，不避让输入法。跳页对话框弹出键盘时，
-                // 若 IME inset 改变阅读视口，会触发一次整本书重新分页；
-                // 键盘属于对话框窗口，不应参与正文排版。
-                .windowInsetsPadding(WindowInsets.safeDrawing.exclude(WindowInsets.ime)),
+                .windowInsetsPadding(readerWindowInsets),
         ) {
             val density = LocalDensity.current
             val horizontalPaddingPx = with(density) { settings.horizontalPaddingDp.dp.roundToPx() }
@@ -210,21 +215,23 @@ fun ReaderScreen(
             val contentWidthPx = (constraints.maxWidth - horizontalPaddingPx * 2).coerceAtLeast(1)
             val contentHeightPx = (constraints.maxHeight - verticalPaddingPx * 2).coerceAtLeast(1)
             val titleHeightPx = with(density) { TITLE_LINE_HEIGHT.toPx() + TITLE_GAP.toPx() }
+            // 字号与行高必须和正文 Text 用同一个 Density 解析：
+            // Android 14+ 的系统字体缩放是非线性的，不能手算 sp×density×fontScale；
+            // 否则分页器与渲染器会使用不同的字号/行高（前者偏大），出现半屏空白。
+            val fontSizePx = with(density) { settings.fontSizeSp.sp.toPx() }
+            val lineHeightPx = with(density) {
+                (settings.fontSizeSp * settings.lineHeightMultiplier).sp.toPx()
+            }
             val viewport = ReaderViewport(
                 widthPx = contentWidthPx,
                 heightPx = contentHeightPx,
                 titleHeightPx = titleHeightPx.roundToInt(),
-                density = density.density,
-                fontScale = density.fontScale,
+                fontSizePx = fontSizePx,
+                lineHeightPx = lineHeightPx,
+                fontFamily = settings.fontFamily,
             )
 
-            LaunchedEffect(
-                viewport.widthPx,
-                viewport.heightPx,
-                viewport.titleHeightPx,
-                viewport.density,
-                viewport.fontScale,
-            ) {
+            LaunchedEffect(viewport) {
                 viewModel.onViewportMeasured(viewport)
             }
 

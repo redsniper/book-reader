@@ -81,7 +81,7 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
 
 ## 测试
 
-- 133 项 JVM/Robolectric 测试全部通过，覆盖：
+- 134 项 JVM/Robolectric 测试全部通过，覆盖：
   - 编码探测、文本规范化、自动分章、页索引、进度换算；
   - PBKDF2 密码哈希、失败节流、下拉解锁状态机；
   - 真实 Room DAO、DataStore、SharedPreferences；
@@ -90,6 +90,7 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
   - Shelf / Reader / Settings ViewModel；
   - 隐藏会话后台锁定：阅读器立即锁定并保存进度、书架退回普通书架、普通书不受影响；
   - 页索引文件缓存（往返、签名失效、损坏回退、LRU、删除级联）；
+  - 阅读视口/字号度量与分页同源（Compose 解析 px 驱动重排、系统字体缩放）；
   - StaticLayout 分页器（Robolectric 原生图形）。
 - **按仓库要求，测试源码不纳入 Git 跟踪**（见 `.gitignore` 的 `app/src/test/`、`app/src/androidTest/`）；本地工作区仍保留完整测试。
 - 测试报告：`app/build/reports/tests/testDebugUnitTest/index.html`

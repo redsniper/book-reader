@@ -11,6 +11,7 @@ import com.moyue.reader.core.DispatcherProvider
 import com.moyue.reader.data.file.BookFileStore
 import com.moyue.reader.domain.model.Book
 import com.moyue.reader.domain.model.Chapter
+import com.moyue.reader.domain.model.FontFamilyOption
 import com.moyue.reader.domain.model.ReadingAnchor
 import com.moyue.reader.domain.model.ReadingProgress
 import com.moyue.reader.domain.model.ReaderSettings
@@ -47,13 +48,23 @@ enum class ReaderError {
     PAGINATION_FAILED,
 }
 
-/** 阅读视口（像素）。由 Compose 的 BoxWithConstraints 测量后传给 ViewModel。 */
+/** 阅读视口与排版度量（像素）。由 Compose 的 BoxWithConstraints 测量后传给 ViewModel。 */
 data class ReaderViewport(
     val widthPx: Int,
     val heightPx: Int,
     val titleHeightPx: Int,
-    val density: Float,
-    val fontScale: Float,
+    /**
+     * 正文字号（px）。
+     *
+     * 必须由 Compose 的 `TextUnit.toPx()` 解析后传入，而不是在 ViewModel 里用
+     * `sp × density × fontScale` 手算：Android 14+ 的系统字体缩放是非线性的，
+     * 同一个 sp 在大字号下与线性值可能相差很多；手算会让分页器与正文 Text
+     * 使用不同的字号/行高，出现“每页只排半屏”的问题。
+     */
+    val fontSizePx: Float,
+    /** 正文行高（px），与 [fontSizePx] 同源解析。 */
+    val lineHeightPx: Float,
+    val fontFamily: FontFamilyOption,
 )
 
 sealed interface ReaderUiState {
@@ -313,7 +324,7 @@ class ReaderViewModel(
         if (currentBook.isScannedPdf || chapters.isEmpty()) return
 
         val snapshotSettings = settings
-        val spec = buildLayoutSpec(snapshotSettings, currentViewport)
+        val spec = buildLayoutSpec(currentViewport)
         val signature = PageIndexSignature.of(currentBook.contentHash, chapters, spec)
 
         // 幂等保护：同一套输入已经排好或正在排时，不重复启动任务。
@@ -429,14 +440,15 @@ class ReaderViewModel(
         }
     }
 
-    private fun buildLayoutSpec(settings: ReaderSettings, viewport: ReaderViewport): PageLayoutSpec {
-        val fontSizePx = settings.fontSizeSp * viewport.density * viewport.fontScale
+    private fun buildLayoutSpec(viewport: ReaderViewport): PageLayoutSpec {
+        // 字号/行高直接取 UI 用同一个 Density 解析出的像素值，确保 StaticLayout 测量
+        // 与正文 Text 渲染完全同源（含 Android 14+ 非线性系统字体缩放）。
         return PageLayoutSpec(
             widthPx = viewport.widthPx,
             heightPx = viewport.heightPx,
-            fontFamily = settings.fontFamily,
-            fontSizePx = fontSizePx,
-            lineHeightPx = fontSizePx * settings.lineHeightMultiplier,
+            fontFamily = viewport.fontFamily,
+            fontSizePx = viewport.fontSizePx,
+            lineHeightPx = viewport.lineHeightPx,
             chapterTitleHeightPx = viewport.titleHeightPx,
         )
     }
@@ -574,16 +586,14 @@ class ReaderViewModel(
     /**
      * 应用排版设置。
      *
-     * 主题与翻页模式不需要重新分页；字号/行距/字体/边距变化会触发重排，
-     * 重排前用当前页字符锚点恢复位置。
+     * 这里只更新设置与 UI 状态，不直接触发分页：字号、行高、字体、边距最终都会
+     * 反映到 ReaderScreen 重新测量出的 [ReaderViewport]（含 Compose 解析后的
+     * 字号/行高像素），由 `onViewportMeasured` 统一触发一次重排。这样分页参数
+     * 永远与正文渲染同源，也避免一次设置变更触发两次分页。
+     * 主题与翻页模式不改变视口/字号，因此不会触发重排。
      */
     fun applySettings(newSettings: ReaderSettings) {
         val safe = newSettings.sanitized()
-        val old = settings
-        val layoutChanged = old.fontSizeSp != safe.fontSizeSp ||
-            old.lineHeightMultiplier != safe.lineHeightMultiplier ||
-            old.fontFamily != safe.fontFamily ||
-            old.horizontalPaddingDp != safe.horizontalPaddingDp
         settings = safe
         chromeVisible = when (val state = _uiState.value) {
             is ReaderUiState.Ready -> state.chromeVisible
@@ -598,11 +608,6 @@ class ReaderViewModel(
                 is ReaderUiState.PdfReady -> state.copy(settings = safe)
                 else -> state
             }
-        }
-
-        val isScannedPdf = book?.isScannedPdf == true
-        if (layoutChanged && !isScannedPdf) {
-            startPagination()
         }
     }
 

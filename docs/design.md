@@ -655,7 +655,11 @@ interface PageIndexCache {
 }
 ```
 
-- 阅读页使用 `BoxWithConstraints` 获得可用宽高，扣除安全区与内边距后计算 `PageLayoutSpec`；视口只避让系统栏与刘海，**排除 IME inset**，避免跳页对话框的键盘改变正文高度并触发整本书重排。
+- 阅读页使用 `BoxWithConstraints` 获得可用宽高，扣除内边距后计算 `PageLayoutSpec`。视口规则：
+  - **全屏沉浸**：只避让物理挖孔（`WindowInsets.displayCutout`），不避让可隐藏的状态栏/导航栏，也不避让 IME。系统栏的临时显隐、跳页键盘、TOC 底部弹层都不得改变分页视口；否则同一本书会生成多套页索引并触发二次整书重排。
+  - **分屏/自由窗口**：使用 `WindowInsets.safeDrawing`（系统栏由系统保留），窗口尺寸变化属于真实排版变化。
+  - 字号与行高由正文 `Text` 使用同一个 `LocalDensity` 解析：`settings.fontSizeSp.sp.toPx()` 与 `(settings.fontSizeSp × lineHeightMultiplier).sp.toPx()`，再随 `ReaderViewport` 传给分页器。**禁止**在 ViewModel 里手算 `sp × density × fontScale`：Android 14+ 的系统字体缩放是非线性的，手算会与渲染字号不一致，造成大字号下半屏空白。
+  - `ReaderViewModel` 只由 `onViewportMeasured` 驱动重排；`applySettings` 仅更新状态，避免一次设置变更触发两次分页。主题/翻页模式不改变视口或字号，因此不重排。
 - 签名只包含会影响页边界的输入。主题、左右/上下翻页模式不改变字符页边界，因此不参与签名，也不触发重排。
 - `ReaderViewModel` 在分页前先按签名查缓存：
   - **命中**：反序列化页区间，配合当前章节重建 `ReaderPageIndex`，直接按字符锚点恢复位置，跳过 `PageBreaker`；
@@ -666,7 +670,7 @@ interface PageIndexCache {
 - `PAGE_INDEX_ENGINE_VERSION` 在页边界算法（StaticLayout 处理、逐行装箱、标题预留、空章节策略）变化时递增，旧缓存自动失效。
 - 同一签名已经排好或正在排时，`ReaderViewModel` 直接复用现有页索引/任务，不重复启动分页；这覆盖跳页、弹窗、转场等重复视口回调。
 - 重排前记录当前 `ReadingAnchor`，重排后调用 `pageIndex.pageForAnchor(anchor)` 恢复。
-- 分页任务在 `Dispatchers.Default` 执行，按章 `yield()` 保持 UI 响应；首次分页提供 0–100% 进度状态。大书策略仍为一次性完成后进入阅读，在 Xiaomi 15 Ultra 上百万字目标 < 3 秒。
+- 分页任务在 `Dispatchers.Default` 执行，按章 `yield()` 保持 UI 响应；首次分页提供 0–100% 进度状态。大书策略仍为一次性完成后进入阅读，在 Xiaomi 15 Ultra 上百万字目标 < 3 秒；API 35 x86_64 模拟器（4 GB）实测首次约 8–9 秒，真机目标需复核。
 
 ### 11.4 页索引 API
 
