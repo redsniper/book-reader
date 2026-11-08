@@ -281,7 +281,7 @@ ui (Compose + MVVM) → domain ← data / platform
 - 依赖版本集中在 `gradle/libs.versions.toml`；升级 Kotlin/AGP/Compose/Room/PDFBox 必须单独验证构建、单元测试与真机行为，并在计划中记录。
 - 新增依赖需说明用途、体积、许可证与离线可行性；禁止引入需要联网或仅云端可用的库。
 - 国内构建优先使用镜像（Gradle wrapper 腾讯镜像、Maven 阿里云镜像）；不得把个人代理地址、绝对 SDK 路径写入受跟踪文件。
-- `.toolchain/`、`.gradle-home/`、`.gradle/`、`local.properties`、`app/build/`、构建日志、`.claude/` 均不得提交。
+- `.android-home/`（本机 Android 用户目录）、`.toolchain/`、`.gradle-home/`、`.gradle/`、`local.properties`、`app/build/`、构建日志、`.claude/` 均不得提交。
 - `local.properties` 仅本机使用；CI/新环境通过 `ANDROID_HOME` 或 `sdk.dir` 配置。
 - Robolectric 的下载缓存位于 `app/build/robolectric-home`，使用国内镜像；不得改回用户主目录（受限环境不可写）。
 - 提交格式：

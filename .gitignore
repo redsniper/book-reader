@@ -1,5 +1,6 @@
 # 工具链与构建产物（本机 SDK 路径不入库）
 .toolchain/
+.android-home/
 .gradle-home/
 local.properties
 .gradle/
