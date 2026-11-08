@@ -5,6 +5,7 @@ import com.moyue.reader.core.DefaultDispatcherProvider
 import com.moyue.reader.core.DispatcherProvider
 import com.moyue.reader.core.SystemClock
 import com.moyue.reader.core.Clock
+import com.moyue.reader.data.cache.FilePageIndexCache
 import com.moyue.reader.data.db.AppDatabase
 import com.moyue.reader.data.file.BookFileStore
 import com.moyue.reader.data.parser.EpubParser
@@ -17,6 +18,7 @@ import com.moyue.reader.data.repository.readerSettingsDataStore
 import com.moyue.reader.domain.crypto.Pbkdf2PasswordHasher
 import com.moyue.reader.domain.parser.BookParserFactory
 import com.moyue.reader.domain.reader.PageBreaker
+import com.moyue.reader.domain.reader.PageIndexCache
 import com.moyue.reader.domain.repository.ReadingRepository
 import com.moyue.reader.domain.repository.ReadingSettingsRepository
 import com.moyue.reader.domain.repository.ShelfRepository
@@ -110,6 +112,12 @@ class AppContainer(application: Application) {
     }
 
     val pageBreaker: PageBreaker by lazy { AndroidPageBreaker() }
+
+    /**
+     * 页索引文件缓存。与分页器分开注入，方便测试替换为内存实现；
+     * 缓存目录位于每本书的私有目录下，删除书籍时一并清理。
+     */
+    val pageIndexCache: PageIndexCache by lazy { FilePageIndexCache(fileStore) }
 
     val progressCalculator: ProgressCalculator by lazy { ProgressCalculator() }
 }

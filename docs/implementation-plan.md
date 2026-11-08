@@ -21,6 +21,7 @@
 | M8 | 单元测试与集成测试补齐、全绿 | P0 | [x] |
 | M9 | 可安装 APK 构建、静态检查、验收与黑盒测试指南 | P0 | [~] |
 | M10 | 文档更新与交付 | P1 | [x] |
+| M11 | 分页缓存优化：重开/跳页避免重复排版 | P1 | [x] |
 
 ---
 
@@ -79,7 +80,7 @@
 | M3-2 | `PageBreaker` 接口 + StaticLayout 实现（首页预留标题、逐行装箱、yield） | Robolectric 分页测试：无重叠/遗漏，字号变化生效 | [x] |
 | M3-3 | `PageIndexBuilder` 全书索引 + 分页进度回调 | 构造多章书，页数正确 | [x] |
 | M3-4 | `ProgressCalculator`：字符进度、锚点→页、页→进度 | 边界测试（0%、50%、100%、章节首尾）通过 | [x] |
-| M3-5 | `LayoutSignature` 与重排策略（设置/视口变化时恢复锚点） | ViewModel 测试：改字号后仍停留在原文字 | [x] |
+| M3-5 | 排版签名与重排策略（设置/视口变化时恢复锚点） | ViewModel 测试：改字号后仍停留在原文字 | [x] |
 | M3-6 | 扫描 PDF 页索引与进度（按原页） | 单测通过 | [x] |
 
 **验收**：100 万字模拟文本分页 < 3 秒（桌面 JVM 参考，真机复测）。
@@ -159,7 +160,7 @@
 | # | 任务 | 验收标准 | 状态 |
 | --- | --- | --- | --- |
 | M9-1 | `./gradlew assembleDebug` 成功，生成 APK | `app/build/outputs/apk/debug/app-debug.apk`，约 26 MB | [x] |
-| M9-2 | `./gradlew testDebugUnitTest` 全绿 | 113 项测试，0 失败 | [x] |
+| M9-2 | `./gradlew testDebugUnitTest` 全绿 | 127 项测试，0 失败（新增分页缓存 14 项） | [x] |
 | M9-3 | Lint 静态检查（无阻断项） | 0 Error，剩余为未使用资源/图标与依赖库告警 | [x] |
 | M9-4 | 模拟器/真机安装并走通主流程 | 构建环境无 AVD，未执行；已交付用户黑盒指南供真机/模拟器验收 | [~] |
 | M9-5 | 编写用户黑盒测试指南（模拟器操作、逐步用例、预期结果） | `docs/black-box-test-guide.md` 完成 | [x] |
@@ -177,6 +178,20 @@
 
 ---
 
+## M11 · 分页缓存优化（P1）
+
+| # | 任务 | 验收标准 | 状态 |
+| --- | --- | --- | --- |
+| M11-1 | `PageIndexSignature` + `PageIndexCache` 领域契约 | 签名覆盖文件内容、章节切分、排版参数与引擎版本 | [x] |
+| M11-2 | `FilePageIndexCache`：二进制格式、原子写入、严格校验、LRU 清理、删除级联 | 缓存往返/损坏/签名失效/删除测试全绿 | [x] |
+| M11-3 | ReaderViewModel 接入缓存并加同签名幂等保护 | 相同排版重开不调用 `PageBreaker`；跳页不改变 `layoutVersion` | [x] |
+| M11-4 | 阅读视口排除 IME inset | 跳页对话框键盘不改变正文可用高度 | [x] |
+| M11-5 | 文档与黑盒用例同步 | `design.md`、README、黑盒指南、AGENTS 基线更新 | [x] |
+
+**验收**：同一本 TXT 在相同排版下第二次打开不再执行 StaticLayout 整书分页；跳页不触发整本书重排；字号/行距/边距/字体变化仍会重排一次并保持字符锚点；缓存损坏或清除应用数据后自动回退为重新分页，不崩溃、不丢进度。
+
+---
+
 ## 实施顺序说明
 
 1. **先做 M0–M3**：数据、解析、分页是阅读器的地基；先以单元测试锁定正确性，避免 UI 返工。
@@ -184,18 +199,20 @@
 3. **M6 阅读器**：分页引擎稳定后再接 UI，减少调试成本。
 4. **M7–M10**：打磨、测试、验收与文档。
 
-## 当前状态（2026-11-07）
+## 当前状态（2026-11-08）
 
-- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制。
-- 自动化验证：`./gradlew testDebugUnitTest` **113 项测试通过，0 失败**（含 Room/Robolectric 集成、真实 PDFBox PDF、StaticLayout 分页、三个 ViewModel）。
+- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制；M11 的分页缓存与跳页重排优化。
+- 自动化验证：`./gradlew testDebugUnitTest` **127 项测试通过，0 失败**（含 Room/Robolectric 集成、真实 PDFBox PDF、StaticLayout 分页、页索引文件缓存、三个 ViewModel）。
 - 构建产物：`app/build/outputs/apk/debug/app-debug.apk`，约 26 MB，package `com.moyue.reader.debug`。
-- 静态检查：Lint 仅剩告警（无 Error），报告 `app/build/reports/lint-results-debug.html`。
-- 待用户执行：按 `docs/black-box-test-guide.md` 在 Xiaomi 15 Ultra 或模拟器上完成视觉/手势/PDF 渲染黑盒验收（BB-01～BB-20）。
+- 静态检查：`./gradlew lintDebug` **0 Error / 57 Warning**，报告 `app/build/reports/lint-results-debug.html`。
+- 待用户执行：按 `docs/black-box-test-guide.md` 在 Xiaomi 15 Ultra 或模拟器上完成视觉/手势/PDF 渲染/分页缓存黑盒验收（BB-01～BB-21）。
 - 测试源码按仓库要求不纳入 Git（`app/src/test/`、`app/src/androidTest/` 已加入 `.gitignore`），本地工作区保留并可运行。
 - 偏差记录：
   - 设计阶段的“段间距”设置在实现中移除，避免 Compose 渲染与 StaticLayout 分页测量不一致；需求未要求该项。
   - 封面文件名统一为 `cover.img`（按字节保存，按内容解码），而非设计初稿的 `cover.jpg`。
   - EPUB 内部多锚点目录合并为 spine 文档级章节（设计已列为 v1 限制）。
-  - 未执行 Compose 仪器测试与模拟器自动安装（环境无 AVD）；UI 验收转由用户黑盒用例覆盖。
+  - 未执行 Compose 仪器测试与模拟器自动安装；本机虽已配置 `moyue_api35`，但本轮未做模拟器视觉/手势验收，UI 验收转由用户黑盒用例覆盖。
+  - 分页缓存采用书籍目录下的二进制文件而非 Room 表：页索引是派生数据，文件缓存避免数据库 schema 迁移，且能随书籍目录级联删除。
+  - 阅读视口使用 `safeDrawing - ime`，避免跳页对话框键盘引起视口高度变化和重复分页。
 
 > 本文件在每完成一个模块后更新；验收结果与偏差记录追加在文末。

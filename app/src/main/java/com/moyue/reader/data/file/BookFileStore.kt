@@ -24,6 +24,7 @@ data class StagedSource(
  * 目录布局：
  * filesDir/books/{bookId}/source.{ext}
  * filesDir/books/{bookId}/cover.img
+ * filesDir/books/{bookId}/pagination/  （页索引缓存文件，可随时重建）
  * filesDir/books/{bookId}.tmp/  （导入暂存，失败时清理）
  *
  * 这里不依赖 Android Context，构造时传入 filesDir，便于 Robolectric/JVM 临时目录测试。
@@ -146,6 +147,20 @@ class BookFileStore(filesDir: File) {
 
     fun coverFile(relativePath: String): File = resolve(relativePath)
 
+    /**
+     * 页索引缓存目录。
+     *
+     * 放在书籍目录内而不是独立顶层目录，有两个原因：
+     * 1. 删除书籍时 [deleteBookFiles] 会一并清理，不会留下无主缓存；
+     * 2. 隐藏书籍的缓存与源文件同处私有目录，不额外扩大可见面。
+     *
+     * 该目录是派生数据，损坏或缺失只会导致一次重新分页，不影响正文与进度。
+     */
+    fun paginationCacheDir(bookId: String): File {
+        validateBookId(bookId)
+        return File(bookDir(bookId), PAGINATION_CACHE_DIR_NAME)
+    }
+
     private fun tempDir(bookId: String): File = File(booksDir, "$bookId.tmp")
 
     private fun bookDir(bookId: String): File = File(booksDir, bookId)
@@ -165,6 +180,7 @@ class BookFileStore(filesDir: File) {
     companion object {
         const val BOOKS_DIR_NAME = "books"
         const val COVER_FILE_NAME = "cover.img"
+        const val PAGINATION_CACHE_DIR_NAME = "pagination"
         const val MAX_COVER_BYTES = 10 * 1024 * 1024
         private val BOOK_ID_PATTERN = Regex("^[A-Za-z0-9-]{8,64}$")
     }

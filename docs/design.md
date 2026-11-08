@@ -185,7 +185,7 @@ flowchart LR
 - **Adapter**：`PdfBoxTextExtractor` 适配 PDFBox，`AndroidTextMeasurer` 适配 StaticLayout。
 - **State**：`ReaderUiState` 密封状态（Loading / Ready / Error），杜绝非法状态组合。
 - **Observer**：DAO 返回 `Flow`，书架与进度自动刷新。
-- **Value Object**：`BookId`、`ReadingAnchor`、`LayoutSignature` 等不可变值对象（v1 以类型别名 + 数据类实现）。
+- **Value Object**：`ReadingAnchor`、`PageIndexSignature`、`PageLayoutSpec` 等不可变值对象（v1 以数据类实现）。
 
 ### 6.3 技术栈与版本基线
 
@@ -222,11 +222,12 @@ com.moyue.reader
 │   │                            // ReaderTheme, FontFamilyOption, PageMode, BookFormat, ...
 │   ├── repository/              // BookRepository, SettingsRepository, HiddenShelfRepository 接口
 │   ├── parser/                  // BookParser, ParsedBook, ParseRequest, BookParserFactory
+│   ├── reader/                  // PageIndexBuilder, ReaderPageIndex,
+│   │                            // PageIndexCache / PageIndexSignature 契约
 │   ├── service/
 │   │   ├── BookImportService.kt
 │   │   ├── ChapterSplitter.kt
 │   │   ├── ProgressCalculator.kt
-│   │   ├── PageIndexBuilder.kt
 │   │   ├── HiddenShelfManager.kt
 │   │   ├── PullDownUnlockDetector.kt
 │   │   └── UnlockThrottle.kt
@@ -235,7 +236,8 @@ com.moyue.reader
 │   ├── db/                      // AppDatabase, entities, DAOs
 │   ├── repository/              // RoomBookRepository, DataStoreSettingsRepository,
 │   │                            // SharedPreferencesPasswordStore
-│   ├── file/                    // BookFileStore（私有目录/封面/清理）
+│   ├── file/                    // BookFileStore（私有目录/封面/缓存/清理）
+│   ├── cache/                   // FilePageIndexCache（页索引文件缓存）
 │   └── parser/                  // TxtParser, EpubParser, PdfParser, 编码检测, HTML清洗
 ├── platform/
 │   ├── pagination/              // AndroidPageBreaker, StaticLayout 页边界计算
@@ -414,7 +416,9 @@ filesDir/
 └── books/
     └── {bookId}/
         ├── source.txt | source.epub | source.pdf    # 原始文件副本
-        └── cover.img                                 # EPUB 封面（可选，按原始字节保存）
+        ├── cover.img                                 # EPUB 封面（可选，按原始字节保存）
+        └── pagination/                               # 页索引缓存（派生数据，可重建）
+            └── {signature}.idx                       # 一种排版一个文件
 cacheDir/
 └── pdf_pages/{bookId}/                               # 可选位图缓存，系统可随时清理
 ```
@@ -626,22 +630,36 @@ class PageIndexBuilder(private val breaker: PageBreaker) {
 - `PageIndexBuilder` 把所有章节的页拼接为**全局页索引**，并用数组记录每页起始字符、章节起始页，供二分查找。
 - **扫描版 PDF 不分页**：页索引直接映射 `0..pageCount-1`，`PageInfo.pdfPageIndex` 有值。
 
-### 11.3 布局签名与重排
+### 11.3 排版签名、重排与页索引缓存
 
 ```kotlin
-data class LayoutSignature(
-    val viewportWidthPx: Int,
-    val viewportHeightPx: Int,
-    val settings: ReaderSettings,
+data class PageIndexSignature(
+    val contentHash: String,        // 源文件 SHA-256
+    val chapterCount: Int,
+    val totalChars: Int,
+    val chapterMetaHash: String,    // 章节索引/起始偏移/长度/正文长度的 SHA-256
+    val layout: PageLayoutSpec,     // 可用宽高、字体、字号、行高、标题预留高度
+    val engineVersion: Int,         // 页边界算法版本
 )
+
+interface PageIndexCache {
+    fun load(bookId: String, signature: PageIndexSignature, chapters: List<Chapter>): ReaderPageIndex?
+    fun save(bookId: String, signature: PageIndexSignature, chapters: List<Chapter>, index: ReaderPageIndex)
+}
 ```
 
-- 阅读页使用 `BoxWithConstraints` 获得可用宽高，扣除状态栏、内边距、底部栏占位后计算 `PageLayoutSpec`。
-- ViewModel 缓存 `layoutSignature`；签名变化（旋转、字号、字体、行距、边距、页模式）→ 取消旧任务，后台重新分页。
+- 阅读页使用 `BoxWithConstraints` 获得可用宽高，扣除安全区与内边距后计算 `PageLayoutSpec`；视口只避让系统栏与刘海，**排除 IME inset**，避免跳页对话框的键盘改变正文高度并触发整本书重排。
+- 签名只包含会影响页边界的输入。主题、左右/上下翻页模式不改变字符页边界，因此不参与签名，也不触发重排。
+- `ReaderViewModel` 在分页前先按签名查缓存：
+  - **命中**：反序列化页区间，配合当前章节重建 `ReaderPageIndex`，直接按字符锚点恢复位置，跳过 `PageBreaker`；
+  - **未命中**：在 `Dispatchers.Default` 执行 `PageIndexBuilder`，完成后在 `Dispatchers.IO` 原子写入缓存，再进入阅读。
+- 缓存文件位于 `filesDir/books/{bookId}/pagination/{sha256(signature)}.idx`，二进制保存页区间与章节首页标记；文件头重复保存签名，用于防哈希碰撞、版本不符与损坏文件。
+- 写入先写同目录临时文件，再 `ATOMIC_MOVE` 替换；读取时严格校验魔数、格式版本、引擎版本、签名、页数上限、章节连续、页区间首尾相接/不越界/不出现非空章节空页。任一校验失败都按未命中并删除坏文件，绝不使用半截页索引截断正文。
+- 每本书最多保留 4 套排版、总量 8 MB；命中时更新访问时间，写入后按 LRU 清理。删除书籍时缓存随书籍目录级联删除。
+- `PAGE_INDEX_ENGINE_VERSION` 在页边界算法（StaticLayout 处理、逐行装箱、标题预留、空章节策略）变化时递增，旧缓存自动失效。
+- 同一签名已经排好或正在排时，`ReaderViewModel` 直接复用现有页索引/任务，不重复启动分页；这覆盖跳页、弹窗、转场等重复视口回调。
 - 重排前记录当前 `ReadingAnchor`，重排后调用 `pageIndex.pageForAnchor(anchor)` 恢复。
-- 分页任务在 `Dispatchers.Default` 执行，按章 `yield()` 保持 UI 响应；提供 0–100% 进度状态。
-- 分页结果只存内存（`ReaderPageIndex` 含每页约 40 字节，百万字小说约 3000 页、<1 MB），不写数据库。
-- 大书策略：先完成当前章所在区间并允许阅读，后台继续补齐全书页数？v1 采用一次性完成后进入阅读，显示"正在排版 x%"；在 Xiaomi 15 Ultra 上百万字目标 < 3 秒，若实测超时可迭代为增量分页。
+- 分页任务在 `Dispatchers.Default` 执行，按章 `yield()` 保持 UI 响应；首次分页提供 0–100% 进度状态。大书策略仍为一次性完成后进入阅读，在 Xiaomi 15 Ultra 上百万字目标 < 3 秒。
 
 ### 11.4 页索引 API
 
@@ -861,7 +879,7 @@ stateDiagram-v2
 | EPUB 加密/DRM | 提示暂不支持加密电子书 |
 | PDF 加密 | 提示需要密码的 PDF 暂不支持 |
 | PDF 扫描件 | 自动降级逐页看图，提示保留原版式 |
-| 分页过程被杀 | 无持久化中间态；下次打开重新分页并用字符锚点恢复 |
+| 分页过程被杀 | 未写完的缓存只有临时文件，启动后按未命中处理；下次打开重排当前排版并用字符锚点恢复，其他已缓存排版仍可命中 |
 | 源文件被系统清理 | 副本在私有目录，不受影响；若私有文件丢失，打开时提示"文件丢失，请重新导入" |
 | 数据库损坏 | 启动时捕获，提示重启/清除数据（v1 不自动删库） |
 | 隐藏密码未设置 | 下拉提示去设置页设置 |
@@ -878,7 +896,7 @@ stateDiagram-v2
 
 - **目标设备**：Xiaomi 15 Ultra（高性能）；最低 minSdk 26 仅保证安装兼容，实际以 HyperOS 3 为准。
 - **导入**：流式复制 + 边复制边计算 SHA-256，避免二次读盘；大文件禁止并发导入。
-- **分页**：StaticLayout 在后台线程；百万字书籍目标 < 3 秒；缓存页面索引；设置变更防抖。
+- **分页**：StaticLayout 在后台线程；首次百万字目标 < 3 秒；页索引按“内容 + 章节 + 排版 + 引擎版本”签名持久化缓存，重开同一本书/同排版跳页不再重排；字号等排版变更在松手后应用并只重排一次。
 - **内存**：按章读正文；扫描 PDF 位图按屏幕尺寸采样并 LRU 缓存（最多 4 页）；导入后释放解析对象。
 - **启动**：书架查询只取元数据与进度，不加载正文；PDFBox 初始化轻量。
 - **APK 体积**：PDFBox-Android 较大，可接受；不引入在线/图片加载框架。

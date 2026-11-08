@@ -184,6 +184,9 @@ class ReaderPageIndex(
  *
  * 文本格式逐章调用 [PageBreaker]，扫描版 PDF 直接一章一页。
  * 构建过程为挂起函数，并按章让出线程，避免大书长时间占用单一协程。
+ *
+ * 注意：修改页区间拼接/空章节占位等逻辑时必须递增 `PAGE_INDEX_ENGINE_VERSION`，
+ * 使旧缓存失效。
  */
 class PageIndexBuilder(private val breaker: PageBreaker) {
 

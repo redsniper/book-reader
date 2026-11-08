@@ -14,10 +14,12 @@ import com.moyue.reader.domain.model.Chapter
 import com.moyue.reader.domain.model.ReadingAnchor
 import com.moyue.reader.domain.model.ReadingProgress
 import com.moyue.reader.domain.model.ReaderSettings
+import com.moyue.reader.domain.reader.PageBreaker
 import com.moyue.reader.domain.reader.PageIndexBuilder
+import com.moyue.reader.domain.reader.PageIndexCache
+import com.moyue.reader.domain.reader.PageIndexSignature
 import com.moyue.reader.domain.reader.PageLayoutSpec
 import com.moyue.reader.domain.reader.ReaderPageIndex
-import com.moyue.reader.domain.reader.PageBreaker
 import com.moyue.reader.domain.repository.ReadingRepository
 import com.moyue.reader.domain.repository.ReadingSettingsRepository
 import com.moyue.reader.domain.repository.ShelfRepository
@@ -104,6 +106,7 @@ class ReaderViewModel(
     private val readingRepository: ReadingRepository,
     private val settingsRepository: ReadingSettingsRepository,
     private val pageBreaker: PageBreaker,
+    private val pageIndexCache: PageIndexCache,
     private val fileStore: BookFileStore,
     private val hiddenShelfSession: HiddenShelfSession,
     private val progressCalculator: ProgressCalculator,
@@ -125,6 +128,12 @@ class ReaderViewModel(
     private var layoutVersion: Int = 0
     private var paginationJob: Job? = null
     private var saveJob: Job? = null
+
+    /** 当前页索引对应的缓存签名；同签名重复回调时可直接复用，不再重排。 */
+    private var readySignature: PageIndexSignature? = null
+
+    /** 正在执行的排版签名；用于合并重复的分页请求。 */
+    private var paginationSignature: PageIndexSignature? = null
 
     init {
         loadBook()
@@ -233,6 +242,16 @@ class ReaderViewModel(
         val currentViewport = viewport ?: return
         if (currentBook.isScannedPdf || chapters.isEmpty()) return
 
+        val snapshotSettings = settings
+        val spec = buildLayoutSpec(snapshotSettings, currentViewport)
+        val signature = PageIndexSignature.of(currentBook.contentHash, chapters, spec)
+
+        // 幂等保护：同一套输入已经排好或正在排时，不重复启动任务。
+        // 跳页、弹窗、转场都可能让 Compose 重新回调视口，但页索引本身没有变化；
+        // 这里按完整签名拦截，避免“翻一页就重排全书”的放大效应。
+        if (paginationJob?.isActive == true && paginationSignature == signature) return
+        if (pageIndex != null && readySignature == signature) return
+
         val previousState = _uiState.value
         val anchor = when (previousState) {
             is ReaderUiState.Ready -> previousState.pageIndex.anchorForPage(previousState.currentPage)
@@ -244,6 +263,7 @@ class ReaderViewModel(
         }
 
         paginationJob?.cancel()
+        paginationSignature = signature
         if (previousState is ReaderUiState.Ready) {
             _uiState.value = previousState.copy(
                 isPaginating = true,
@@ -254,20 +274,46 @@ class ReaderViewModel(
             _uiState.value = ReaderUiState.Paginating(currentBook, 0f)
         }
 
-        val snapshotSettings = settings
-        val spec = buildLayoutSpec(snapshotSettings, currentViewport)
         paginationJob = viewModelScope.launch {
             try {
-                val index = withContext(dispatchers.default) {
-                    PageIndexBuilder(pageBreaker).build(chapters, spec) { progress ->
-                        updatePaginationProgress(progress)
+                // 先尝试文件缓存；命中时只需反序列化页区间，避免重新跑 StaticLayout。
+                val cached = try {
+                    withContext(dispatchers.io) {
+                        pageIndexCache.load(bookId, signature, chapters)
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // 缓存损坏/IO 失败不能阻断阅读，按未命中继续现场分页。
+                    null
                 }
+
+                val index = if (cached != null) {
+                    cached
+                } else {
+                    val built = withContext(dispatchers.default) {
+                        PageIndexBuilder(pageBreaker).build(chapters, spec) { progress ->
+                            updatePaginationProgress(progress)
+                        }
+                    }
+                    try {
+                        withContext(dispatchers.io) {
+                            pageIndexCache.save(bookId, signature, chapters, built)
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // 缓存写入失败只影响下次打开速度，不影响本次阅读。
+                    }
+                    built
+                }
+
                 if (index.isEmpty) {
                     _uiState.value = ReaderUiState.Error(ReaderError.PAGINATION_FAILED)
                     return@launch
                 }
                 pageIndex = index
+                readySignature = signature
                 layoutVersion += 1
                 val targetPage = index.pageForAnchor(anchor)
                 _uiState.value = ReaderUiState.Ready(
@@ -484,6 +530,8 @@ class ReaderViewModel(
     fun retry() {
         paginationJob?.cancel()
         pageIndex = null
+        readySignature = null
+        paginationSignature = null
         savedAnchor = null
         loadBook()
     }
@@ -507,6 +555,7 @@ class ReaderViewModel(
                         readingRepository = container.readingRepository,
                         settingsRepository = container.settingsRepository,
                         pageBreaker = container.pageBreaker,
+                        pageIndexCache = container.pageIndexCache,
                         fileStore = container.fileStore,
                         hiddenShelfSession = container.hiddenShelfSession,
                         progressCalculator = container.progressCalculator,

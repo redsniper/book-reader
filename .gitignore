@@ -22,3 +22,6 @@ app/src/androidTest/
 
 # 构建日志
 *.log
+
+# 黑盒测试结果
+blackbox-test-result/

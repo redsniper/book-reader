@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -190,7 +192,10 @@ fun ReaderScreen(
         BoxWithConstraints(
             Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing),
+                // 只避让系统栏与刘海，不避让输入法。跳页对话框弹出键盘时，
+                // 若 IME inset 改变阅读视口，会触发一次整本书重新分页；
+                // 键盘属于对话框窗口，不应参与正文排版。
+                .windowInsetsPadding(WindowInsets.safeDrawing.exclude(WindowInsets.ime)),
         ) {
             val density = LocalDensity.current
             val horizontalPaddingPx = with(density) { settings.horizontalPaddingDp.dp.roundToPx() }

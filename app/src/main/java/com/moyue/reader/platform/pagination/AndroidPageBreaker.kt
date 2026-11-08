@@ -21,6 +21,9 @@ import com.moyue.reader.domain.reader.PageRange
  * - 纯本地测量，不依赖 Compose 组合，可放到后台线程执行。
  *
  * 章节首页预留标题高度；页与页之间不会截断行。空章节返回一个空页区间。
+ *
+ * 注意：任何会改变页边界的修改都必须递增 `PAGE_INDEX_ENGINE_VERSION`，
+ * 否则已落盘的页索引缓存会与新的测量结果不一致。
  */
 class AndroidPageBreaker : PageBreaker {
 

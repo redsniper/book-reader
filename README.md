@@ -14,6 +14,7 @@
 - 目录、按章跳转、按页数跳转、自动保存/恢复阅读进度。
 - 阅读主题：羊皮纸（日间黄底黑字）、夜读（黑底浅字）、青竹、宣白。
 - 字体族、字号、行距、左右边距可调；改动排版后按字符锚点保持阅读位置。
+- 页索引按“内容 + 章节 + 排版参数 + 引擎版本”缓存到应用私有目录：重开同一本书、同排版跳页不再重新排版；字号等排版变化会重排一次并自动更新缓存。
 - TXT 自动识别 UTF-8 / UTF-16 / GB18030 编码并按中英文关键字分章；无标题文本按段落回退分节。
 - PDF 自动判断文本层：文本 PDF 提取文字并重排分章；扫描版 PDF 自动降级为逐页位图渲染。
 
@@ -79,13 +80,14 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
 
 ## 测试
 
-- 113 项 JVM/Robolectric 测试全部通过，覆盖：
+- 127 项 JVM/Robolectric 测试全部通过，覆盖：
   - 编码探测、文本规范化、自动分章、页索引、进度换算；
   - PBKDF2 密码哈希、失败节流、下拉解锁状态机；
   - 真实 Room DAO、DataStore、SharedPreferences；
   - TXT/EPUB/PDF 解析（含真实 PDFBox 文本提取、加密 PDF、扫描版判定）；
   - 导入 → 书架 → 隐藏/解锁 → 进度往返 → 删除/重置的端到端集成流程；
   - Shelf / Reader / Settings ViewModel；
+  - 页索引文件缓存（往返、签名失效、损坏回退、LRU、删除级联）；
   - StaticLayout 分页器（Robolectric 原生图形）。
 - **按仓库要求，测试源码不纳入 Git 跟踪**（见 `.gitignore` 的 `app/src/test/`、`app/src/androidTest/`）；本地工作区仍保留完整测试。
 - 测试报告：`app/build/reports/tests/testDebugUnitTest/index.html`
@@ -97,7 +99,7 @@ UI (Compose + MVVM) → domain ← data / platform
 ```
 
 - `domain/`：模型、仓库接口、解析契约、分章/进度/密码/下拉检测等领域服务。
-- `data/`：Room、DataStore、SharedPreferences、私有文件存储、TXT/EPUB/PDF 解析。
+- `data/`：Room、DataStore、SharedPreferences、私有文件存储、页索引缓存、TXT/EPUB/PDF 解析。
 - `platform/`：StaticLayout 分页器、PDFBox 文本提取、PdfRenderer 扫描页渲染。
 - `ui/`：书架、阅读器、设置、导航、设计系统。
 - `AppContainer` 手写组合根；ViewModel 只依赖接口。
@@ -109,7 +111,7 @@ UI (Compose + MVVM) → domain ← data / platform
 app/src/main/java/com/moyue/reader/
 ├── core/            # 调度器、时钟
 ├── domain/          # 模型、仓库接口、解析契约、领域服务
-├── data/            # Room、DataStore、文件、解析器
+├── data/            # Room、DataStore、文件、页索引缓存、解析器
 ├── platform/        # 分页、PDF 文本/渲染适配
 └── ui/              # 书架、阅读器、设置、导航、主题
 docs/
@@ -132,6 +134,7 @@ docs/
 - 隐藏密码是界面访问控制，不加密书籍文件。
 - 单文件限制：TXT/EPUB ≤ 40 MB，PDF ≤ 300 MB。
 - 阅读设置中的字体族使用系统字体，暂不支持导入字体文件。
+- 页索引缓存只保存在本机应用私有目录；清除应用数据、重装、修改源文件或升级页边界算法后，首次打开会重新排版。
 
 ## 许可
 
