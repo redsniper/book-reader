@@ -127,6 +127,8 @@ flowchart TD
     H --> A
     I --> J[阅读器]
     J -->|返回| G
+    J -->|Home / 锁屏 / 最近任务| K[隐藏会话锁定]
+    K --> L[锁定提示页：返回书架重新输入密码]
 ```
 
 ---
@@ -408,6 +410,11 @@ erDiagram
 - 修改密码必须先验证旧密码；忘记密码只能清空隐藏书架并重置（D-04）。
 - 密码长度 4–64 个字符（含中文、符号），设置页实时校验。
 - 解锁失败节流：连续 5 次失败后冷却 30 秒（`UnlockThrottle`，内存态，进程重启重置）。
+- 解锁状态仅存 `HiddenShelfSession` 内存（`StateFlow<Boolean>`），**不写入** SavedState、DataStore、Room 或 SharedPreferences：
+  - 旋转/分屏等配置变更（`isChangingConfigurations=true`）保持会话；
+  - 应用进入后台（`MainActivity.onStop`，Home、最近任务、锁屏）立即锁定；
+  - 进程重启后会话自动失效。
+- 锁定通过 Flow 立即通知阅读器与书架：不必等页面重新可见，后台排版任务也不能在锁定后发布隐藏正文。
 
 ### 9.4 私有文件布局
 
@@ -719,22 +726,23 @@ class ReaderPageIndex(
 - 点击页面中部切换顶部/底部栏；左右边缘点击翻页（左右模式）；垂直模式点击仅切换栏。
 - 左右模式：`HorizontalPager` 全屏滑动，支持快速滑动；页面切换有轻微滑动动画。
 - 上下模式：`LazyColumn` 连续排列整页文本；滚动停止后记录首个可见页。
-- 系统返回：保存进度并回到书架；隐藏书架内的书返回隐藏书架（会话保持）。
+- 系统返回：保存进度并回到书架；隐藏书架内的书返回隐藏书架（会话未锁定时）。
+- 会话锁定：应用进入后台后，隐藏书阅读页切换为"需要验证密码"错误页，正文与分页任务立即丢弃；用户只能返回书架，重新下拉并输入密码后才能再次进入隐藏书架。错误页文案"隐藏书架已锁定，请返回书架重新输入密码"。
 - 顶部栏：返回、书名（单行省略）、目录。
 - 底部栏：进度百分比、章节位置、全局页码、跳页按钮、阅读设置（Aa）。
 - 目录：`ModalBottomSheet`，LazyColumn 展示章节标题与序号；当前章节高亮，点击跳转并关闭；显示章节总数。
 - 设置面板：`ModalBottomSheet`，包含主题、翻页方式、字体、字号、行距、边距；带实时预览小卡片。字号/行距在滑动结束（`onValueChangeFinished`）后应用并重排；主题立即生效。
-- 错误/加载状态：全屏加载动画带百分比；错误页提供"返回书架"与"重试"。
+- 错误/加载状态：全屏加载动画带百分比；错误页提供"返回书架"与"重试"（锁定错误页只保留"返回书架"）。
 
 ### 12.2 ReaderViewModel 状态
 
 ```kotlin
 sealed interface ReaderUiState {
     data object Loading : ReaderUiState
-    data class Paginating(val progress: Float) : ReaderUiState
+    data class Paginating(val book: Book, val progress: Float) : ReaderUiState
     data class Ready(
         val book: Book,
-        val pages: ReaderPageIndex,
+        val pageIndex: ReaderPageIndex,
         val currentPage: Int,
         val settings: ReaderSettings,
         val chromeVisible: Boolean,
@@ -746,7 +754,11 @@ sealed interface ReaderUiState {
         val settings: ReaderSettings,
         val chromeVisible: Boolean,
     ) : ReaderUiState
-    data class Failed(val message: String) : ReaderUiState
+    data class Error(
+        val error: ReaderError,
+        // 错误页沿用当前主题；隐藏会话锁定页在夜读下不能闪回白底。
+        val settings: ReaderSettings,
+    ) : ReaderUiState
 }
 ```
 
@@ -760,9 +772,10 @@ sealed interface ReaderUiState {
 
 ### 12.4 生命周期
 
-- `ON_STOP` 时强制保存进度。
+- `ON_STOP` 时强制保存进度；`MainActivity.onStop` 随后锁定隐藏会话（配置变更除外），保证先保存再丢弃正文。
+- `ON_START` 时阅读器兜底检查会话；若隐藏会话已锁定，立即切换到错误页，不渲染任何正文帧。
 - 阅读器 `DisposableEffect` 恢复系统栏、清除常亮标记。
-- 分页/解析协程绑定 `viewModelScope`；页面销毁自动取消。
+- 分页/解析协程绑定 `viewModelScope`；页面销毁或会话锁定自动取消，避免锁定后仍发布分页结果。
 
 ---
 
@@ -792,7 +805,8 @@ sealed interface ReaderUiState {
 - 若未设置密码：弹出提示"请先在设置中设置隐藏书架密码"，提供跳转按钮。
 - 密码框：标题"进入隐藏书架"、密码隐藏输入、错误提示、失败冷却倒计时、取消/确认。
 - 验证成功：进入隐藏书架视图（同一 `ShelfScreen` 切换模式），显示"隐藏书架"标识与"退出隐藏"入口；不写入导航参数、不写入日志。
-- 退出隐藏模式立即清空 `HiddenShelfSession`；进入阅读器后返回仍处于隐藏模式（同一 ViewModel 会话）。
+- 退出隐藏模式立即清空 `HiddenShelfSession`；进入阅读器后返回仍处于隐藏模式（同一前台会话内）。
+- 后台锁定：从隐藏书架切到后台后，`MainActivity.onStop` 锁定会话，`ShelfViewModel` 立即退回普通书架；返回时弹出"隐藏书架已锁定"对话框，提供"输入密码"与"稍后"两个操作。提示使用持久 UI 状态而非 Snackbar，因为应用不可见时 Snackbar 会提前超时。
 
 ### 13.4 密码设置与重置
 
@@ -864,6 +878,8 @@ stateDiagram-v2
 ```
 
 导航采用 `NavHost`，隐藏模式是 `ShelfViewModel` 的 UI 状态，不单独持久化路由，防止进程重启后绕过密码直达隐藏书架。
+
+`MainActivity` 使用 `launchMode="singleTop"`：从桌面图标或最近任务返回时复用同一个 Activity/任务栈。若使用默认 `standard`，部分启动器会在隐藏阅读页之上再压入一个新的书架 Activity，用户看到"初始页面"，而旧阅读页仍在返回栈中；复用一个实例后，返回路径统一先触发后台锁定检查，再展示锁定提示页。
 
 ---
 
@@ -940,6 +956,7 @@ stateDiagram-v2
 10. 删除：数据库、章节、正文、进度、源文件、封面全部清除。
 11. 下拉：阈值以下不触发，超过阈值仅触发一次；不在顶部时不累计。
 12. 设置：非法值回退；DataStore 持久化；主题切换不重排、字号切换重排。
+13. 会话：隐藏阅读中锁定会话→阅读器立即进入锁定错误页并保存进度；隐藏书架锁定→退回普通书架并显示锁定提示；普通书不受影响；配置变更不误锁。
 
 ---
 
@@ -954,7 +971,7 @@ stateDiagram-v2
 | 隐藏书架安全性被误解 | 用户误以为文件加密 | UI 与文档明确"界面隐藏，非文件加密" |
 | Room 正文体积膨胀 | 大书数据库变大 | 正文纯文本压缩空间有限；v1 接受；后续可外置文件或压缩 |
 | 编码识别失败 | 乱码 | 多级回退；提供"部分字符异常"提示；后续可增加手动编码选择 |
-| 导航恢复绕过隐藏入口 | 隐私泄露 | 隐藏模式不持久化；`HiddenShelfSession` 进程内有效；仅通过密码进入 |
+| 导航恢复绕过隐藏入口 | 隐私泄露 | 隐藏模式不持久化；`HiddenShelfSession` 进程内有效且进入后台即锁定；`singleTop` 防止启动器叠加新 Activity；仅通过密码进入 |
 | 依赖下载困难（离线/网络） | 构建失败 | 提供 Gradle wrapper、依赖锁定建议与镜像说明 |
 
 ---

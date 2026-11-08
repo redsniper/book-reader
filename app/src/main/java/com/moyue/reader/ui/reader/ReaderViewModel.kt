@@ -85,7 +85,16 @@ sealed interface ReaderUiState {
         val chromeVisible: Boolean,
     ) : ReaderUiState
 
-    data class Error(val error: ReaderError) : ReaderUiState
+    /**
+     * 错误页状态。
+     *
+     * 携带当前阅读设置，确保错误页（尤其是隐藏书架锁定页）沿用用户主题，
+     * 不会在夜读模式下突然闪回羊皮纸白底。
+     */
+    data class Error(
+        val error: ReaderError,
+        val settings: ReaderSettings = ReaderSettings(),
+    ) : ReaderUiState
 }
 
 /**
@@ -126,6 +135,7 @@ class ReaderViewModel(
     private var savedAnchor: ReadingAnchor? = null
     private var chromeVisible: Boolean = true
     private var layoutVersion: Int = 0
+    private var loadJob: Job? = null
     private var paginationJob: Job? = null
     private var saveJob: Job? = null
 
@@ -136,7 +146,53 @@ class ReaderViewModel(
     private var paginationSignature: PageIndexSignature? = null
 
     init {
+        observeHiddenSession()
         loadBook()
+    }
+
+    /**
+     * 监听隐藏会话锁定。
+     *
+     * 后台锁定发生时页面可能已不可见，排版任务却仍在运行；必须立即取消任务并
+     * 切换到锁定错误页，否则任务完成后会把隐藏正文重新发布到 UI（用户返回时
+     * 就能直接看到内容）。`StateFlow` 的当前值也会在订阅时立即回调，因此进程
+     * 恢复后若会话仍锁定，同样会进入错误页。
+     */
+    private fun observeHiddenSession() {
+        viewModelScope.launch {
+            hiddenShelfSession.unlocked.collect { unlocked ->
+                if (!unlocked) lockIfHiddenBook()
+            }
+        }
+    }
+
+    /** 构造错误状态并保留当前阅读设置，避免错误页主题与正文不一致。 */
+    private fun errorState(error: ReaderError): ReaderUiState.Error =
+        ReaderUiState.Error(error, settings)
+
+    /** 当前书籍是隐藏书且会话已锁定时，丢弃正文状态并提示重新解锁。 */
+    private fun lockIfHiddenBook() {
+        val currentBook = book ?: return
+        if (!currentBook.hidden || hiddenShelfSession.isUnlocked) return
+        val state = _uiState.value
+        if (state is ReaderUiState.Error) return
+
+        // 先按锁定前的 Ready/PdfReady 状态保存进度，再切换到错误页。
+        saveNow()
+        loadJob?.cancel()
+        paginationJob?.cancel()
+        paginationJob = null
+        _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
+    }
+
+    /**
+     * 页面重新可见时兜底检查一次。
+     *
+     * 正常情况下会话锁定会通过 Flow 立即生效；该入口用于覆盖 Activity 重建、
+     * 首次组合晚于 ON_START 等生命周期时序，避免任何一帧泄露隐藏正文。
+     */
+    fun onAppForegrounded() {
+        lockIfHiddenBook()
     }
 
     // ---------------------------------------------------------------------
@@ -144,38 +200,44 @@ class ReaderViewModel(
     // ---------------------------------------------------------------------
 
     private fun loadBook() {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.value = ReaderUiState.Loading
             try {
                 val loadedBook = shelfRepository.getBook(bookId)
                 if (loadedBook == null) {
-                    _uiState.value = ReaderUiState.Error(ReaderError.BOOK_MISSING)
+                    _uiState.value = errorState(ReaderError.BOOK_MISSING)
                     return@launch
                 }
                 book = loadedBook
+                // 先加载阅读设置：锁定错误页也要沿用用户的主题（尤其夜读）。
+                settings = settingsRepository.settings.first()
                 if (loadedBook.hidden && !hiddenShelfSession.isUnlocked) {
-                    _uiState.value = ReaderUiState.Error(ReaderError.HIDDEN_LOCKED)
+                    _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
                     return@launch
                 }
                 val sourceMissing = runCatching {
                     !fileStore.resolve(loadedBook.sourcePath).isFile
                 }.getOrDefault(true)
                 if (sourceMissing) {
-                    _uiState.value = ReaderUiState.Error(ReaderError.FILE_MISSING)
+                    _uiState.value = errorState(ReaderError.FILE_MISSING)
                     return@launch
                 }
 
-                settings = settingsRepository.settings.first()
                 shelfRepository.updateLastOpened(bookId, clock.nowMillis())
                 val progress = readingRepository.getProgress(bookId)
 
                 if (loadedBook.isScannedPdf) {
                     val loadedChapters = readingRepository.getChapters(bookId)
                     if (loadedChapters.isEmpty()) {
-                        _uiState.value = ReaderUiState.Error(ReaderError.LOAD_FAILED)
+                        _uiState.value = errorState(ReaderError.LOAD_FAILED)
                         return@launch
                     }
                     chapters = loadedChapters
+                    if (loadedBook.hidden && !hiddenShelfSession.isUnlocked) {
+                        _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
+                        return@launch
+                    }
                     val current = (progress?.chapterIndex ?: 0)
                         .coerceIn(0, loadedChapters.lastIndex)
                     _uiState.value = ReaderUiState.PdfReady(
@@ -189,10 +251,14 @@ class ReaderViewModel(
                 } else {
                     val loadedChapters = readingRepository.getChaptersWithText(bookId)
                     if (loadedChapters.isEmpty() || loadedChapters.all { it.text.isBlank() }) {
-                        _uiState.value = ReaderUiState.Error(ReaderError.LOAD_FAILED)
+                        _uiState.value = errorState(ReaderError.LOAD_FAILED)
                         return@launch
                     }
                     chapters = loadedChapters
+                    if (loadedBook.hidden && !hiddenShelfSession.isUnlocked) {
+                        _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
+                        return@launch
+                    }
                     savedAnchor = resolveAnchor(progress)
                     _uiState.value = ReaderUiState.Paginating(loadedBook, 0f)
                     if (viewport != null) startPagination()
@@ -200,7 +266,11 @@ class ReaderViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                _uiState.value = ReaderUiState.Error(ReaderError.LOAD_FAILED)
+                _uiState.value = if (book?.hidden == true && !hiddenShelfSession.isUnlocked) {
+                    errorState(ReaderError.HIDDEN_LOCKED)
+                } else {
+                    errorState(ReaderError.LOAD_FAILED)
+                }
             }
         }
     }
@@ -308,8 +378,13 @@ class ReaderViewModel(
                     built
                 }
 
+                if (currentBook.hidden && !hiddenShelfSession.isUnlocked) {
+                    // 后台锁定可能发生在分页期间：即使页索引已经构建完成，也不能发布正文。
+                    _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
+                    return@launch
+                }
                 if (index.isEmpty) {
-                    _uiState.value = ReaderUiState.Error(ReaderError.PAGINATION_FAILED)
+                    _uiState.value = errorState(ReaderError.PAGINATION_FAILED)
                     return@launch
                 }
                 pageIndex = index
@@ -331,7 +406,11 @@ class ReaderViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                _uiState.value = ReaderUiState.Error(ReaderError.PAGINATION_FAILED)
+                _uiState.value = if (currentBook.hidden && !hiddenShelfSession.isUnlocked) {
+                    errorState(ReaderError.HIDDEN_LOCKED)
+                } else {
+                    errorState(ReaderError.PAGINATION_FAILED)
+                }
             }
         }
     }
@@ -538,6 +617,7 @@ class ReaderViewModel(
 
     override fun onCleared() {
         saveNow()
+        loadJob?.cancel()
         paginationJob?.cancel()
         saveJob?.cancel()
         super.onCleared()

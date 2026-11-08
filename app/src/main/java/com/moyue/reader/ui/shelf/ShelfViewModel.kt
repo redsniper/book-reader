@@ -50,6 +50,8 @@ data class ShelfUiState(
     val unlockError: UiMessage? = null,
     val unlockCooldownSeconds: Int = 0,
     val setPasswordPromptVisible: Boolean = false,
+    /** 后台锁定后显示持久提示；Snackbar 会在应用不可见时超时，不能用于此场景。 */
+    val hiddenLockedNotice: Boolean = false,
     val editingBook: Book? = null,
     val deleteConfirmBook: Book? = null,
     val importProgress: ImportProgress? = null,
@@ -94,6 +96,15 @@ class ShelfViewModel(
                         loading = false,
                         loadError = error != null,
                     )
+                }
+            }
+        }
+        // 隐藏会话可能在页面不可见时被 MainActivity 锁定（切后台）。
+        // 必须立即退回普通书架：否则从阅读器返回时会直接看到隐藏书籍列表。
+        viewModelScope.launch {
+            hiddenShelfSession.unlocked.collect { unlocked ->
+                if (!unlocked && _uiState.value.mode == ShelfMode.HIDDEN) {
+                    switchToNormalShelf(lockedByBackground = true)
                 }
             }
         }
@@ -252,6 +263,7 @@ class ShelfViewModel(
                         unlockCooldownSeconds = 0,
                         books = emptyList(),
                         loading = true,
+                        hiddenLockedNotice = false,
                         message = UiMessage(R.string.shelf_message_unlocked),
                     )
                 }
@@ -296,13 +308,37 @@ class ShelfViewModel(
     }
 
     fun exitHiddenShelf() {
+        switchToNormalShelf(lockedByBackground = false)
         hiddenShelfSession.lock()
+    }
+
+    /** 关闭后台锁定提示。 */
+    fun dismissHiddenLockedNotice() {
+        _uiState.update { it.copy(hiddenLockedNotice = false) }
+    }
+
+    /**
+     * 切回普通书架。
+     *
+     * 后台锁定不通过 Snackbar 提示：应用不可见时 Snackbar 会提前超时，
+     * 用户返回后什么也看不到。这里改用持久标志，由 UI 展示可操作的对话框。
+     *
+     * 先更新 UI 模式并切换查询条件，再锁会话（由调用方决定时机），
+     * 避免会话 Flow 的锁定回调看到旧的 HIDDEN 模式而重复提示。
+     */
+    private fun switchToNormalShelf(lockedByBackground: Boolean) {
+        if (_uiState.value.mode != ShelfMode.HIDDEN) return
         _uiState.update {
             it.copy(
                 mode = ShelfMode.NORMAL,
                 books = emptyList(),
                 loading = true,
-                message = UiMessage(R.string.shelf_message_exited_hidden),
+                hiddenLockedNotice = lockedByBackground,
+                message = if (lockedByBackground) {
+                    null
+                } else {
+                    UiMessage(R.string.shelf_message_exited_hidden)
+                },
             )
         }
         mode.value = ShelfMode.NORMAL

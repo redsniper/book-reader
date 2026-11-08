@@ -104,7 +104,11 @@
     <string name="shelf_message_operation_failed">操作失败：%1$s</string>
     <string name="shelf_hidden_empty_title">隐藏书架是空的</string>
     <string name="shelf_hidden_empty_body">在普通书架长按书籍或点击“⋯”，选择“隐藏到隐藏书架”。</string>
-    <string name="shelf_hidden_hint">仅本次会话可见，退出后需重新输入密码。</string>
+    <string name="shelf_hidden_hint">仅本次会话可见，离开应用后需重新输入密码。</string>
+    <string name="shelf_hidden_locked_title">隐藏书架已锁定</string>
+    <string name="shelf_hidden_locked_body">已离开应用，隐藏书架已自动锁定。请重新输入密码后再查看隐藏书籍。</string>
+    <string name="shelf_hidden_locked_unlock">输入密码</string>
+    <string name="shelf_hidden_locked_dismiss">稍后</string>
     <string name="shelf_pull_release">松开进入隐藏书架</string>
     <string name="shelf_book_info">书籍信息</string>
     <string name="shelf_book_meta">%1$s · %2$s</string>
@@ -134,6 +138,7 @@
     <!-- 阅读器补充 -->
     <string name="reader_error_book_missing">书籍不存在或已被删除</string>
     <string name="reader_error_hidden_locked">隐藏书架已锁定，请返回书架重新输入密码</string>
+    <string name="reader_error_locked_title">需要验证密码</string>
     <string name="reader_error_file_missing">书籍文件丢失，请重新导入</string>
     <string name="reader_error_parse">读取书籍内容失败</string>
     <string name="reader_error_pagination">排版失败，请重试</string>

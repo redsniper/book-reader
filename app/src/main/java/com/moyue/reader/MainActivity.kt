@@ -33,4 +33,21 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * 应用离开前台即锁定隐藏书架。
+     *
+     * 必须在 `super.onStop()` 之后锁定：Lifecycle 会把 ON_STOP 同步分发给
+     * ReaderScreen，先让它保存当前阅读进度；若提前锁定，ReaderViewModel 会
+     * 先把状态切成锁定错误页，导致进度快照丢失。
+     *
+     * 配置变更（旋转、分屏尺寸变化）也会回调 onStop，但进程与用户会话仍在，
+     * 按设计保持解锁；`isChangingConfigurations` 用于区分这两种情况。
+     */
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) {
+            (application as MoYueApplication).container.hiddenShelfSession.lock()
+        }
+    }
 }

@@ -51,6 +51,7 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -146,7 +147,13 @@ fun ReaderScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) viewModel.saveNow()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> viewModel.saveNow()
+                // 后台锁定由 MainActivity 在 onStop 完成；返回前台时兜底检查，
+                // 防止 Flow 回调与首帧之间出现隐藏正文。
+                Lifecycle.Event.ON_START -> viewModel.onAppForegrounded()
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -238,6 +245,7 @@ fun ReaderScreen(
 
                     is ReaderUiState.Error -> ReaderErrorView(
                         error = current.error,
+                        palette = palette,
                         onRetry = viewModel::retry,
                         onBack = {
                             viewModel.saveNow()
@@ -719,6 +727,7 @@ private fun ReaderLoading(palette: ReaderPalette, progress: Float?) {
 @Composable
 private fun ReaderErrorView(
     error: ReaderError,
+    palette: ReaderPalette,
     onRetry: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -728,23 +737,35 @@ private fun ReaderErrorView(
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = stringResource(R.string.reader_error_title),
+            text = stringResource(
+                if (error == ReaderError.HIDDEN_LOCKED) {
+                    R.string.reader_error_locked_title
+                } else {
+                    R.string.reader_error_title
+                },
+            ),
             style = MaterialTheme.typography.titleLarge,
-            color = Color(0xFF211D18),
+            color = palette.text,
         )
         Spacer(Modifier.height(8.dp))
         Text(
             text = stringResource(error.messageRes()),
             style = MaterialTheme.typography.bodyMedium,
-            color = Color(0xFF6B6255),
+            color = palette.secondary,
         )
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextButton(onClick = onBack) {
+            TextButton(
+                onClick = onBack,
+                colors = ButtonDefaults.textButtonColors(contentColor = palette.accent),
+            ) {
                 Text(stringResource(R.string.reader_back_shelf))
             }
             if (error != ReaderError.HIDDEN_LOCKED && error != ReaderError.BOOK_MISSING) {
-                TextButton(onClick = onRetry) {
+                TextButton(
+                    onClick = onRetry,
+                    colors = ButtonDefaults.textButtonColors(contentColor = palette.accent),
+                ) {
                     Icon(Icons.Outlined.Refresh, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.reader_retry))
@@ -1083,6 +1104,7 @@ private fun ReaderError.messageRes(): Int = when (this) {
 private fun ReaderUiState.settingsOrDefault(): ReaderSettings = when (this) {
     is ReaderUiState.Ready -> settings
     is ReaderUiState.PdfReady -> settings
+    is ReaderUiState.Error -> settings
     else -> ReaderSettings()
 }
 

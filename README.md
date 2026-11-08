@@ -24,7 +24,8 @@
 - 长按或卡片“⋯”进入书籍编辑：隐藏到隐藏书架 / 移出隐藏书架 / 删除。
 
 ### 隐藏书架
-- 普通书架顶部大幅下拉 140dp 进入密码框；仅本次进程会话有效。
+- 普通书架顶部大幅下拉 140dp 进入密码框；仅本次前台会话有效，切到后台（Home/最近任务/锁屏）立即锁定，返回需重新输入密码。
+- 隐藏书阅读中锁定后显示“隐藏书架已锁定，请返回书架重新输入密码”；隐藏书架则退回普通书架并提示重新解锁。
 - 密码在设置页设置/修改（修改需旧密码），PBKDF2WithHmacSHA256 + 随机盐 + 120,000 次迭代，常量时间比较。
 - 忘记密码可“清空隐藏书架并重置密码”（二次确认输入“清空”），不可恢复。
 - 应用无 INTERNET 权限、`allowBackup=false`，隐藏书籍不会进入云备份。
@@ -80,13 +81,14 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
 
 ## 测试
 
-- 127 项 JVM/Robolectric 测试全部通过，覆盖：
+- 133 项 JVM/Robolectric 测试全部通过，覆盖：
   - 编码探测、文本规范化、自动分章、页索引、进度换算；
   - PBKDF2 密码哈希、失败节流、下拉解锁状态机；
   - 真实 Room DAO、DataStore、SharedPreferences；
   - TXT/EPUB/PDF 解析（含真实 PDFBox 文本提取、加密 PDF、扫描版判定）；
   - 导入 → 书架 → 隐藏/解锁 → 进度往返 → 删除/重置的端到端集成流程；
   - Shelf / Reader / Settings ViewModel；
+  - 隐藏会话后台锁定：阅读器立即锁定并保存进度、书架退回普通书架、普通书不受影响；
   - 页索引文件缓存（往返、签名失效、损坏回退、LRU、删除级联）；
   - StaticLayout 分页器（Robolectric 原生图形）。
 - **按仓库要求，测试源码不纳入 Git 跟踪**（见 `.gitignore` 的 `app/src/test/`、`app/src/androidTest/`）；本地工作区仍保留完整测试。

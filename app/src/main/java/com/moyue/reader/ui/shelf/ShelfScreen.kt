@@ -97,6 +97,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.moyue.reader.MoYueApplication
 import com.moyue.reader.R
@@ -144,6 +145,7 @@ fun ShelfScreen(
 
     // 从设置页返回时刷新"是否已设置密码"状态。
     val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshPasswordState()
@@ -161,8 +163,11 @@ fun ShelfScreen(
         viewModel.exitHiddenShelf()
     }
 
-    LaunchedEffect(state.message) {
+    // 消息只在 RESUMED 时展示：后台锁定会在应用不可见时写入提示，
+    // 若提前调用 showSnackbar，用户返回时提示早已超时消失。
+    LaunchedEffect(state.message, lifecycleState) {
         val message = state.message ?: return@LaunchedEffect
+        if (lifecycleState != Lifecycle.State.RESUMED) return@LaunchedEffect
         snackbarHostState.showSnackbar(
             context.getString(message.resId, *message.args.toTypedArray()),
         )
@@ -352,6 +357,27 @@ fun ShelfScreen(
                     .padding(bottom = 96.dp, start = 20.dp, end = 20.dp),
             )
         }
+    }
+
+    if (state.hiddenLockedNotice) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissHiddenLockedNotice,
+            title = { Text(stringResource(R.string.shelf_hidden_locked_title)) },
+            text = { Text(stringResource(R.string.shelf_hidden_locked_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.dismissHiddenLockedNotice()
+                        viewModel.onPullDownTriggered()
+                    },
+                ) { Text(stringResource(R.string.shelf_hidden_locked_unlock)) }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissHiddenLockedNotice) {
+                    Text(stringResource(R.string.shelf_hidden_locked_dismiss))
+                }
+            },
+        )
     }
 
     if (state.unlockDialogVisible) {
