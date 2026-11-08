@@ -223,6 +223,21 @@
 
 ---
 
+## M14 · 真机诊断日志与安装包（P1）
+
+| # | 任务 | 验收标准 | 状态 |
+| --- | --- | --- | --- |
+| M14-1 | `DiagnosticLogger` 端口与 `FileDiagnosticLogger`：异步单线程、单行结构化、256 KB×2 滚动、队列满丢弃、事件节流 | 不阻塞业务线程；容量有硬上限；单测覆盖转义/节流/滚动 | [x] |
+| M14-2 | 关键事件埋点：app 启动/重建/后台、导入、打开/分页/跳页/进度/设置、隐藏会话锁定 | 真机可凭日志判断视口、字号 px、缓存命中与耗时；不含书名/正文/路径/密码 | [x] |
+| M14-3 | 设置页“诊断与反馈”：展示日志目录，SAF 导出 `.txt` 到下载目录 | 导出文件可读、包含当前+滚动日志；失败有提示 | [x] |
+| M14-4 | 自动化测试、Lint、APK 与文档 | 137 项测试通过；Lint 0 Error；Debug APK 可安装并完成日志冒烟 | [x] |
+
+**验收结果（2026-11-08，`moyue_api35`）**：导入/阅读/旋转/改字号/跳页/返回全流程日志约 3 KB，
+`pagination.done` 可区分缓存命中与视口/字号；导出文件 3.1 KB、23 行，未出现书名或正文；
+Debug APK 27.8 MB，位于 `app/build/outputs/apk/debug/app-debug.apk`。
+
+---
+
 ## 实施顺序说明
 
 1. **先做 M0–M3**：数据、解析、分页是阅读器的地基；先以单元测试锁定正确性，避免 UI 返工。
@@ -232,10 +247,10 @@
 
 ## 当前状态（2026-11-08）
 
-- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制；M11 的分页缓存与跳页重排优化；M12 的 BB-15 隐藏会话返回路径修复；M13 的 BB-19～BB-21 视口/字号修复。
-- 自动化验证：`./gradlew testDebugUnitTest` **134 项测试通过，0 失败**（含 Room/Robolectric 集成、真实 PDFBox PDF、StaticLayout 分页、页索引文件缓存、三个 ViewModel、隐藏会话后台锁定）。
+- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制；M11 的分页缓存与跳页重排优化；M12 的 BB-15 隐藏会话返回路径修复；M13 的 BB-19～BB-21 视口/字号修复；M14 的真机诊断日志与安装包。
+- 自动化验证：`./gradlew testDebugUnitTest` **137 项测试通过，0 失败**（含 Room/Robolectric 集成、真实 PDFBox PDF、StaticLayout 分页、页索引文件缓存、三个 ViewModel、隐藏会话后台锁定）。
 - 模拟器验证（`moyue_api35`，Android 15）：隐藏书阅读中按 Home 后，经最近任务、桌面图标返回均显示锁定提示；桌面图标不再叠加新 Activity；隐藏书架后台返回显示“隐藏书架已锁定”对话框；旋转保持会话；进程强制停止后重启不直达隐藏内容。
-- 构建产物：`app/build/outputs/apk/debug/app-debug.apk`，约 26 MB，package `com.moyue.reader.debug`。
+- 构建产物：`app/build/outputs/apk/debug/app-debug.apk`，约 27.8 MB，package `com.moyue.reader.debug`；安装后可在设置页导出诊断日志。
 - 静态检查：`./gradlew lintDebug` **0 Error / 57 Warning**，报告 `app/build/reports/lint-results-debug.html`。
 - 待真机复核：模拟器已逐项执行 BB-01～BB-21 并全部通过；仍需在 Xiaomi 15 Ultra 真机复核
   视觉/手势/PDF 渲染/首次排版耗时（模拟器百万字首开约 8–9s，真机 < 3s 目标待验证）。

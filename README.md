@@ -81,7 +81,7 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
 
 ## 测试
 
-- 134 项 JVM/Robolectric 测试全部通过，覆盖：
+- 137 项 JVM/Robolectric 测试全部通过，覆盖：
   - 编码探测、文本规范化、自动分章、页索引、进度换算；
   - PBKDF2 密码哈希、失败节流、下拉解锁状态机；
   - 真实 Room DAO、DataStore、SharedPreferences；
@@ -94,6 +94,18 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
   - StaticLayout 分页器（Robolectric 原生图形）。
 - **按仓库要求，测试源码不纳入 Git 跟踪**（见 `.gitignore` 的 `app/src/test/`、`app/src/androidTest/`）；本地工作区仍保留完整测试。
 - 测试报告：`app/build/reports/tests/testDebugUnitTest/index.html`
+
+## 真机反馈与诊断日志
+
+真机验收时无需连接 adb：应用内置低容量诊断日志，可在设置页一键导出。
+
+1. 复现问题后打开 **设置 → 诊断与反馈**。
+2. 点击 **导出诊断日志**，选择“下载”并保存 `moyue-diagnostics-*.txt`。
+3. 把文件附在反馈中；按钮下方同时显示日志目录，便于 `adb pull`。
+
+日志只记录设备/系统/屏幕/字体缩放、导入格式与耗时、分页视口与字号/行高 px、缓存命中、
+页数、跳页/进度等**元数据**，不包含书名、正文、文件路径或密码。单份上限约 512 KB
+（`moyue.log` + `moyue.log.1`），高频设置事件会节流。
 
 ## 架构
 
@@ -114,7 +126,7 @@ UI (Compose + MVVM) → domain ← data / platform
 app/src/main/java/com/moyue/reader/
 ├── core/            # 调度器、时钟
 ├── domain/          # 模型、仓库接口、解析契约、领域服务
-├── data/            # Room、DataStore、文件、页索引缓存、解析器
+├── data/            # Room、DataStore、文件、页索引缓存、解析器、诊断日志
 ├── platform/        # 分页、PDF 文本/渲染适配
 └── ui/              # 书架、阅读器、设置、导航、主题
 docs/
@@ -126,6 +138,7 @@ docs/
 ## 隐私与安全
 
 - 不申请 INTERNET 权限；无在线书源、无统计 SDK。
+- 诊断日志只写元数据（设备、排版、分页、导入结果），不含书名/正文/路径/密码；容量有硬上限。
 - 书籍文件、封面、阅读进度、设置、密码哈希都保存在应用私有目录。
 - 隐藏书架是**界面隐藏**，不是文件加密；获得 root 权限的攻击者仍可读取私有目录。请勿将其宣传为加密保险箱。
 - 忘记密码只能清空隐藏书架，无法找回原密码。

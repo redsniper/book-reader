@@ -461,6 +461,7 @@ adb shell run-as com.moyue.reader.debug cat shared_prefs/hidden_shelf_security.x
 实际：
 截图/录屏：
 logcat（adb logcat -d > logcat.txt）：
+诊断日志（设置 → 诊断与反馈 → 导出，或 adb pull 上述路径）：
 ```
 
 ### 4.1 首轮失败记录（2026-11-08，`moyue_api35`；已由 M13 修复）
@@ -495,7 +496,24 @@ logcat（adb logcat -d > logcat.txt）：
   直接定位到第 2000 页，说明触发源是键盘引起的 inset/视口变化，而非跳页定位本身。
 - 截图：已截屏（模拟器，未入库）。
 
-## 5. 调试辅助
+## 5. 真机诊断日志与反馈
+
+真机验收时不必每次连 adb：应用会把关键事件写入一份低容量日志，并支持在设置页直接导出。
+
+1. 复现问题后，打开 **设置 → 诊断与反馈**。
+2. 点击 **导出诊断日志**，在系统文件选择器中选择“下载”并保存
+   （文件名形如 `moyue-diagnostics-20261108-1730.txt`）。
+3. 将导出的 `.txt` 与失败记录一起反馈。日志目录同时显示在按钮下方，便于 adb 拉取：
+   `adb pull /sdcard/Android/data/com.moyue.reader.debug/files/diagnostics/moyue.log`。
+
+日志包含：设备/系统/屏幕/字体缩放、导入格式与耗时、打开书籍的章节数/字数、分页视口宽高、
+字号/行高 px、缓存命中与页数、目标页/字符锚点、跳页/字号变更、进度保存与隐藏会话锁定等
+**元数据**；不包含书名、正文、文件路径或密码。单份日志上限约 512 KB（`moyue.log` + `moyue.log.1`），
+设置滑块等高频事件会节流，不会持续大量写盘。
+
+---
+
+## 6. 调试辅助
 
 ```bash
 # 查看应用日志

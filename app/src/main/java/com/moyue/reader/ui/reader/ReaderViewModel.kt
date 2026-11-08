@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.moyue.reader.AppContainer
 import com.moyue.reader.core.Clock
+import com.moyue.reader.core.DiagnosticLogger
 import com.moyue.reader.core.DispatcherProvider
 import com.moyue.reader.data.file.BookFileStore
 import com.moyue.reader.domain.model.Book
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
+import kotlin.math.roundToInt
 
 /** 阅读器错误类型，UI 映射为本地化文案。 */
 enum class ReaderError {
@@ -133,6 +135,8 @@ class ReaderViewModel(
     private val clock: Clock,
     private val dispatchers: DispatcherProvider,
     private val appScope: CoroutineScope,
+    /** 诊断日志：只记录格式/分页度量/进度等元数据，不记录正文或书名。 */
+    private val diagnostics: DiagnosticLogger = DiagnosticLogger.None,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ReaderUiState>(ReaderUiState.Loading)
@@ -190,6 +194,7 @@ class ReaderViewModel(
 
         // 先按锁定前的 Ready/PdfReady 状态保存进度，再切换到错误页。
         saveNow()
+        diagnostics.log("reader.hidden_locked", mapOf("book" to bookId))
         loadJob?.cancel()
         paginationJob?.cancel()
         paginationJob = null
@@ -217,6 +222,7 @@ class ReaderViewModel(
             try {
                 val loadedBook = shelfRepository.getBook(bookId)
                 if (loadedBook == null) {
+                    logOpenError(ReaderError.BOOK_MISSING)
                     _uiState.value = errorState(ReaderError.BOOK_MISSING)
                     return@launch
                 }
@@ -224,6 +230,7 @@ class ReaderViewModel(
                 // 先加载阅读设置：锁定错误页也要沿用用户的主题（尤其夜读）。
                 settings = settingsRepository.settings.first()
                 if (loadedBook.hidden && !hiddenShelfSession.isUnlocked) {
+                    logOpenError(ReaderError.HIDDEN_LOCKED)
                     _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
                     return@launch
                 }
@@ -231,6 +238,7 @@ class ReaderViewModel(
                     !fileStore.resolve(loadedBook.sourcePath).isFile
                 }.getOrDefault(true)
                 if (sourceMissing) {
+                    logOpenError(ReaderError.FILE_MISSING)
                     _uiState.value = errorState(ReaderError.FILE_MISSING)
                     return@launch
                 }
@@ -241,16 +249,29 @@ class ReaderViewModel(
                 if (loadedBook.isScannedPdf) {
                     val loadedChapters = readingRepository.getChapters(bookId)
                     if (loadedChapters.isEmpty()) {
+                        logOpenError(ReaderError.LOAD_FAILED)
                         _uiState.value = errorState(ReaderError.LOAD_FAILED)
                         return@launch
                     }
                     chapters = loadedChapters
                     if (loadedBook.hidden && !hiddenShelfSession.isUnlocked) {
+                        logOpenError(ReaderError.HIDDEN_LOCKED)
                         _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
                         return@launch
                     }
                     val current = (progress?.chapterIndex ?: 0)
                         .coerceIn(0, loadedChapters.lastIndex)
+                    diagnostics.log(
+                        "reader.open",
+                        mapOf(
+                            "book" to bookId,
+                            "format" to loadedBook.format.name,
+                            "scanned" to true,
+                            "pages" to loadedChapters.size,
+                            "restore_page" to current,
+                            "percent" to (((progress?.percent ?: 0f) * 100).roundToInt()),
+                        ),
+                    )
                     _uiState.value = ReaderUiState.PdfReady(
                         book = loadedBook,
                         chapters = loadedChapters,
@@ -262,14 +283,29 @@ class ReaderViewModel(
                 } else {
                     val loadedChapters = readingRepository.getChaptersWithText(bookId)
                     if (loadedChapters.isEmpty() || loadedChapters.all { it.text.isBlank() }) {
+                        logOpenError(ReaderError.LOAD_FAILED)
                         _uiState.value = errorState(ReaderError.LOAD_FAILED)
                         return@launch
                     }
                     chapters = loadedChapters
                     if (loadedBook.hidden && !hiddenShelfSession.isUnlocked) {
+                        logOpenError(ReaderError.HIDDEN_LOCKED)
                         _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
                         return@launch
                     }
+                    diagnostics.log(
+                        "reader.open",
+                        mapOf(
+                            "book" to bookId,
+                            "format" to loadedBook.format.name,
+                            "scanned" to false,
+                            "chapters" to loadedChapters.size,
+                            "chars" to loadedChapters.sumOf { it.charCount },
+                            "restore_ch" to (progress?.chapterIndex ?: 0),
+                            "restore_off" to (progress?.charOffsetInChapter ?: 0),
+                            "percent" to (((progress?.percent ?: 0f) * 100).roundToInt()),
+                        ),
+                    )
                     savedAnchor = resolveAnchor(progress)
                     _uiState.value = ReaderUiState.Paginating(loadedBook, 0f)
                     if (viewport != null) startPagination()
@@ -277,13 +313,20 @@ class ReaderViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                _uiState.value = if (book?.hidden == true && !hiddenShelfSession.isUnlocked) {
-                    errorState(ReaderError.HIDDEN_LOCKED)
+                val error = if (book?.hidden == true && !hiddenShelfSession.isUnlocked) {
+                    ReaderError.HIDDEN_LOCKED
                 } else {
-                    errorState(ReaderError.LOAD_FAILED)
+                    ReaderError.LOAD_FAILED
                 }
+                logOpenError(error)
+                _uiState.value = errorState(error)
             }
         }
+    }
+
+    /** 打开失败只记录错误枚举，不记录异常消息（可能含文件路径）。 */
+    private fun logOpenError(error: ReaderError) {
+        diagnostics.log("reader.open_error", mapOf("book" to bookId, "error" to error.name))
     }
 
     /** 进度中的章节/偏移可能因重新解析而变化，失效时按百分比兜底。 */
@@ -345,6 +388,7 @@ class ReaderViewModel(
 
         paginationJob?.cancel()
         paginationSignature = signature
+        val paginationStartedAt = clock.nowMillis()
         if (previousState is ReaderUiState.Ready) {
             _uiState.value = previousState.copy(
                 isPaginating = true,
@@ -391,10 +435,18 @@ class ReaderViewModel(
 
                 if (currentBook.hidden && !hiddenShelfSession.isUnlocked) {
                     // 后台锁定可能发生在分页期间：即使页索引已经构建完成，也不能发布正文。
+                    diagnostics.log(
+                        "pagination.abort",
+                        mapOf("book" to bookId, "reason" to "hidden_locked"),
+                    )
                     _uiState.value = errorState(ReaderError.HIDDEN_LOCKED)
                     return@launch
                 }
                 if (index.isEmpty) {
+                    diagnostics.log(
+                        "pagination.error",
+                        mapOf("book" to bookId, "error" to ReaderError.PAGINATION_FAILED.name),
+                    )
                     _uiState.value = errorState(ReaderError.PAGINATION_FAILED)
                     return@launch
                 }
@@ -413,15 +465,44 @@ class ReaderViewModel(
                     paginationProgress = 1f,
                     layoutVersion = layoutVersion,
                 )
+                diagnostics.log(
+                    "pagination.done",
+                    mapOf(
+                        "book" to bookId,
+                        "cache" to if (cached != null) "hit" else "miss",
+                        "wpx" to spec.widthPx,
+                        "hpx" to spec.heightPx,
+                        "fontpx" to spec.fontSizePx.roundToInt(),
+                        "linepx" to spec.lineHeightPx.roundToInt(),
+                        "family" to spec.fontFamily.name,
+                        "chapters" to chapters.size,
+                        "pages" to index.totalPages,
+                        "target" to targetPage,
+                        "anchor_ch" to anchor.chapterIndex,
+                        "anchor_off" to anchor.charOffsetInChapter,
+                        "percent" to (index.progressPercent(targetPage) * 100).roundToInt(),
+                        "layout_version" to layoutVersion,
+                        "ms" to (clock.nowMillis() - paginationStartedAt),
+                    ),
+                )
                 scheduleSave()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                _uiState.value = if (currentBook.hidden && !hiddenShelfSession.isUnlocked) {
-                    errorState(ReaderError.HIDDEN_LOCKED)
+                val error = if (currentBook.hidden && !hiddenShelfSession.isUnlocked) {
+                    ReaderError.HIDDEN_LOCKED
                 } else {
-                    errorState(ReaderError.PAGINATION_FAILED)
+                    ReaderError.PAGINATION_FAILED
                 }
+                diagnostics.log(
+                    "pagination.error",
+                    mapOf(
+                        "book" to bookId,
+                        "error" to error.name,
+                        "ms" to (clock.nowMillis() - paginationStartedAt),
+                    ),
+                )
+                _uiState.value = errorState(error)
             }
         }
     }
@@ -485,12 +566,24 @@ class ReaderViewModel(
             is ReaderUiState.Ready -> {
                 if (targetZeroBased !in 0 until state.pageIndex.totalPages) return
                 _uiState.value = state.copy(currentPage = targetZeroBased)
+                diagnostics.log(
+                    "reader.jump_page",
+                    mapOf(
+                        "page" to pageOneBased,
+                        "total" to state.pageIndex.totalPages,
+                        "percent" to (state.pageIndex.progressPercent(targetZeroBased) * 100).roundToInt(),
+                    ),
+                )
                 scheduleSave()
             }
 
             is ReaderUiState.PdfReady -> {
                 if (targetZeroBased !in 0 until state.pageCount) return
                 _uiState.value = state.copy(currentPage = targetZeroBased)
+                diagnostics.log(
+                    "reader.jump_page",
+                    mapOf("page" to pageOneBased, "total" to state.pageCount),
+                )
                 scheduleSave()
             }
 
@@ -504,12 +597,21 @@ class ReaderViewModel(
             is ReaderUiState.Ready -> {
                 val page = state.pageIndex.pageForChapter(chapterIndex)
                 _uiState.value = state.copy(currentPage = page)
+                diagnostics.log(
+                    "reader.jump_chapter",
+                    mapOf(
+                        "chapter" to chapterIndex,
+                        "chapters" to state.chapters.size,
+                        "page" to page,
+                    ),
+                )
                 scheduleSave()
             }
 
             is ReaderUiState.PdfReady -> {
                 if (chapterIndex !in 0 until state.pageCount) return
                 _uiState.value = state.copy(currentPage = chapterIndex)
+                diagnostics.log("reader.jump_chapter", mapOf("chapter" to chapterIndex))
                 scheduleSave()
             }
 
@@ -536,6 +638,16 @@ class ReaderViewModel(
     fun saveNow() {
         saveJob?.cancel()
         val snapshot = progressSnapshot() ?: return
+        diagnostics.log(
+            "reader.progress_save",
+            mapOf(
+                "book" to bookId,
+                "chapter" to snapshot.chapterIndex,
+                "offset" to snapshot.charOffsetInChapter,
+                "percent" to (snapshot.percent * 100).roundToInt(),
+            ),
+            minIntervalMs = 1_500,
+        )
         appScope.launch(NonCancellable) {
             runCatching { readingRepository.saveProgress(bookId, snapshot) }
         }
@@ -609,6 +721,19 @@ class ReaderViewModel(
                 else -> state
             }
         }
+        diagnostics.log(
+            "reader.settings",
+            mapOf(
+                "font" to safe.fontSizeSp,
+                "line" to safe.lineHeightMultiplier,
+                "padding" to safe.horizontalPaddingDp,
+                "family" to safe.fontFamily.name,
+                "theme" to safe.theme.name,
+                "mode" to safe.pageMode.name,
+            ),
+            // 滑块拖动会连续回调，节流到最多 800ms 一条，避免刷盘。
+            minIntervalMs = 800,
+        )
     }
 
     fun retry() {
@@ -621,6 +746,22 @@ class ReaderViewModel(
     }
 
     override fun onCleared() {
+        val state = _uiState.value
+        if (state is ReaderUiState.Ready) {
+            diagnostics.log(
+                "reader.close",
+                mapOf(
+                    "book" to bookId,
+                    "page" to state.currentPage,
+                    "pages" to state.pageIndex.totalPages,
+                ),
+            )
+        } else if (state is ReaderUiState.PdfReady) {
+            diagnostics.log(
+                "reader.close",
+                mapOf("book" to bookId, "page" to state.currentPage, "pages" to state.pageCount),
+            )
+        }
         saveNow()
         loadJob?.cancel()
         paginationJob?.cancel()
@@ -647,6 +788,7 @@ class ReaderViewModel(
                         clock = container.clock,
                         dispatchers = container.dispatchers,
                         appScope = container.appScope,
+                        diagnostics = container.diagnostics,
                     )
                 }
             }

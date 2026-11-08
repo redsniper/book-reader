@@ -193,6 +193,14 @@
     <string name="settings_privacy_note">墨阅不申请网络权限，书籍与密码都只保存在本机。</string>
     <string name="settings_about_body">墨阅是一款完全离线的本地小说阅读器，支持 TXT、EPUB、PDF。阅读数据、书籍文件与隐藏密码均保存在应用私有目录，不上传任何服务器。</string>
     <string name="settings_reading_note">这里的设置会应用到所有书籍。</string>
+    <string name="settings_diagnostics">诊断与反馈</string>
+    <string name="settings_diagnostics_note">遇到问题时可导出日志帮助定位</string>
+    <string name="settings_diagnostics_body">日志只记录设备信息、排版与分页度量、导入结果，不包含书籍正文、书名或密码。最多保留约 512 KB。</string>
+    <string name="settings_export_logs">导出诊断日志</string>
+    <string name="settings_exporting">正在导出…</string>
+    <string name="settings_export_logs_success">日志已导出</string>
+    <string name="settings_export_logs_failure">导出失败，请重试</string>
+    <string name="settings_logs_location">日志目录：%1$s</string>
     <string name="settings_hidden_shelf_section">隐藏书架</string>
     <string name="settings_version_title">版本</string>
     <string name="settings_offline_title">离线与隐私</string>

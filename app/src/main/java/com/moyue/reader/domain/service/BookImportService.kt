@@ -1,6 +1,7 @@
 package com.moyue.reader.domain.service
 
 import com.moyue.reader.core.Clock
+import com.moyue.reader.core.DiagnosticLogger
 import com.moyue.reader.core.DispatcherProvider
 import com.moyue.reader.data.file.BookFileStore
 import com.moyue.reader.data.file.FileTooLargeException
@@ -59,9 +60,45 @@ class BookImportService(
     private val parserFactory: BookParserFactory,
     private val dispatchers: DispatcherProvider,
     private val clock: Clock,
+    /** 诊断日志：只记录格式/大小/耗时/结果枚举，不记录书名、路径或正文。 */
+    private val diagnostics: DiagnosticLogger = DiagnosticLogger.None,
 ) {
 
     suspend fun import(request: ImportRequest): ImportResult = withContext(dispatchers.io) {
+        val startedAt = clock.nowMillis()
+        val detectedFormat = BookFormat.fromFileName(sanitizeDisplayName(request.displayName))
+            ?: BookFormat.fromMimeType(request.mimeType)
+        diagnostics.log(
+            "import.start",
+            mapOf(
+                "format" to (detectedFormat?.name ?: "unsupported"),
+                "size" to (request.sizeBytes ?: -1),
+            ),
+        )
+        val result = executeImport(request)
+        val fields = mutableMapOf<String, Any?>(
+            "format" to (detectedFormat?.name ?: "unsupported"),
+            "size" to (request.sizeBytes ?: -1),
+            "ms" to (clock.nowMillis() - startedAt),
+        )
+        when (result) {
+            is ImportResult.Imported -> {
+                fields["result"] = "imported"
+                fields["book"] = result.bookId
+            }
+
+            is ImportResult.Duplicate -> fields["result"] = "duplicate"
+
+            is ImportResult.Failed -> {
+                fields["result"] = "failed"
+                fields["error"] = result.error::class.simpleName ?: "Unknown"
+            }
+        }
+        diagnostics.log("import.done", fields)
+        result
+    }
+
+    private suspend fun executeImport(request: ImportRequest): ImportResult = withContext(dispatchers.io) {
         val displayName = sanitizeDisplayName(request.displayName)
         val format = BookFormat.fromFileName(displayName)
             ?: BookFormat.fromMimeType(request.mimeType)
@@ -148,6 +185,17 @@ class BookImportService(
                 return@withContext ImportResult.Failed(ImportError.Io, e.message)
             }
 
+            diagnostics.log(
+                "import.book",
+                mapOf(
+                    "book" to bookId,
+                    "format" to format.name,
+                    "chapters" to chapters.size,
+                    "chars" to book.totalChars,
+                    "bytes" to book.fileSize,
+                    "scanned" to parsed.isScannedPdf,
+                ),
+            )
             ImportResult.Imported(bookId = bookId, title = book.title)
         } finally {
             if (!saved) {

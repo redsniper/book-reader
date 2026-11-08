@@ -1,11 +1,15 @@
 package com.moyue.reader
 
 import android.app.Application
+import java.io.File
 import com.moyue.reader.core.DefaultDispatcherProvider
+import com.moyue.reader.core.DiagnosticLogger
 import com.moyue.reader.core.DispatcherProvider
 import com.moyue.reader.core.SystemClock
 import com.moyue.reader.core.Clock
 import com.moyue.reader.data.cache.FilePageIndexCache
+import com.moyue.reader.data.diagnostics.DiagnosticExporter
+import com.moyue.reader.data.diagnostics.FileDiagnosticLogger
 import com.moyue.reader.data.db.AppDatabase
 import com.moyue.reader.data.file.BookFileStore
 import com.moyue.reader.data.parser.EpubParser
@@ -48,6 +52,21 @@ class AppContainer(application: Application) {
 
     /** 应用级协程作用域：退出阅读器后仍能完成进度落库。 */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * 真机诊断日志。
+     *
+     * 放在应用专属外部目录（`Android/data/<包名>/files/diagnostics`），
+     * 无需存储权限；用户可在设置页一键导出到“下载”目录反馈。
+     */
+    val diagnostics: DiagnosticLogger by lazy {
+        val base = appContext.getExternalFilesDir(null) ?: appContext.filesDir
+        FileDiagnosticLogger(File(base, "diagnostics"), clock)
+    }
+
+    val diagnosticExporter: DiagnosticExporter by lazy {
+        DiagnosticExporter(diagnostics, dispatchers)
+    }
 
     val database: AppDatabase by lazy { AppDatabase.create(appContext) }
 
@@ -108,6 +127,7 @@ class AppContainer(application: Application) {
             parserFactory = parserFactory,
             dispatchers = dispatchers,
             clock = clock,
+            diagnostics = diagnostics,
         )
     }
 

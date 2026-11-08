@@ -924,6 +924,27 @@ stateDiagram-v2
 - **兼容性**：`minSdk 26`；Compose 1.7+；targetSdk 35，处理 Android 15 强制 edge-to-edge；无网络权限，无需运行时存储权限（SAF）。
 - **数据安全**：`allowBackup=false`、`dataExtractionRules` 禁用云备份；所有文件私有目录。
 
+### 16.1 诊断日志（真机反馈）
+
+真机验收（旋转/分屏、系统字体缩放、长书首开、跳页重排、PDF 渲染）无法总是连 adb；
+应用内置一份**低容量、结构化、隐私安全**的诊断日志，便于用户导出反馈。
+
+- **位置**：`getExternalFilesDir(null)/diagnostics/moyue.log`（应用专属外部目录，无需存储权限）；
+  外部存储不可用时回退到 `filesDir/diagnostics`。滚动文件 `moyue.log.1` 最多保留一份。
+- **容量**：单文件 256 KB、最多 2 个文件（约 512 KB）；每次写入后 flush；队列有界（256 条），
+  满时丢弃并计数，绝不阻塞阅读线程。
+- **格式**：`ISO 时间 事件 key=value` 单行；值中的换行制表符会转义，异常消息不入日志。
+- **记录事件**：`app.start/app.recreate/app.background`（设备、系统、屏幕、字体缩放、版本）、
+  `import.start/done/book`（格式、大小、耗时、结果枚举、章节/字数/扫描版）、
+  `reader.open/open_error`、`pagination.done`（缓存命中、视口宽高、字号/行高 px、字体、
+  页数、目标页、字符锚点、耗时）、`pagination.error/abort`、`reader.settings`、
+  `reader.jump_page/jump_chapter`、`reader.progress_save/close`、`hidden.lock`、`diagnostics.export`。
+- **隐私红线**：不写书名、正文、文件路径、密码或异常堆栈；只写元数据与枚举。
+  高频事件（设置滑块）按 800ms 节流，进度保存按 1.5s 节流。
+- **导出**：设置 → 诊断与反馈 → 导出诊断日志，通过 SAF `CreateDocument("text/plain")`
+  保存到“下载”目录（文件名 `moyue-diagnostics-YYYYMMDD-HHmm.txt`），用户可直接附给开发者。
+- **测试**：`FileDiagnosticLoggerTest` 覆盖单行转义、节流、容量滚动与文件数上限。
+
 ---
 
 ## 17. 测试策略
@@ -932,7 +953,7 @@ stateDiagram-v2
 
 | 层级 | 工具 | 覆盖内容 |
 | --- | --- | --- |
-| 单元测试（JVM） | JUnit4 + coroutines-test | 编码探测、文本规范化、分章规则、进度计算、页索引、密码哈希、下拉检测、失败节流、设置校验、主题映射、EPUB HTML 清洗、格式识别 |
+| 单元测试（JVM） | JUnit4 + coroutines-test | 编码探测、文本规范化、分章规则、进度计算、页索引、密码哈希、下拉检测、失败节流、设置校验、主题映射、EPUB HTML 清洗、格式识别、诊断日志滚动/节流 |
 | 单元测试（Android 依赖） | Robolectric | StaticLayout 分页器、Room DAO、DataStore、PDFBox 文本提取、导入服务、隐藏书架流程 |
 | 集成测试 | Robolectric + 真实 Room/文件/解析器 | TXT/EPUB/PDF 导入 → 书架 → 打开 → 分页 → 进度保存/恢复 → 隐藏/解锁 → 删除；扫描 PDF 降级 |
 | UI 仪器测试 | Compose UI Test（需模拟器） | 书架渲染、密码对话、阅读器设置面板、翻页手势；作为可选验证 |

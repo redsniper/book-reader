@@ -1,5 +1,7 @@
 package com.moyue.reader.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +75,9 @@ import com.moyue.reader.ui.theme.InkFaint
 import com.moyue.reader.ui.theme.InkSoft
 import com.moyue.reader.ui.theme.Paper
 import com.moyue.reader.ui.theme.PaperLine
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.launch
 
 /**
  * 设置页：阅读偏好 + 隐藏书架安全 + 关于。
@@ -90,6 +96,27 @@ fun SettingsScreen(onBack: () -> Unit) {
     var showSetPassword by remember { mutableStateOf(false) }
     var showChangePassword by remember { mutableStateOf(false) }
     var showReset by remember { mutableStateOf(false) }
+    var exportingLogs by remember { mutableStateOf(false) }
+    val exportScope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        exportScope.launch {
+            exportingLogs = true
+            val exported = container.diagnosticExporter.export(context.contentResolver, uri)
+            exportingLogs = false
+            snackbarHostState.showSnackbar(
+                context.getString(
+                    if (exported) R.string.settings_export_logs_success
+                    else R.string.settings_export_logs_failure,
+                ),
+            )
+        }
+    }
+    val exportFileName = remember {
+        "moyue-diagnostics-${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"))}.txt"
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -218,6 +245,39 @@ fun SettingsScreen(onBack: () -> Unit) {
                         ) {
                             Text(stringResource(R.string.settings_reset_hidden))
                         }
+                    }
+                }
+
+                SettingsSection(
+                    title = stringResource(R.string.settings_diagnostics),
+                    subtitle = stringResource(R.string.settings_diagnostics_note),
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_diagnostics_body),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = InkSoft,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { exportLauncher.launch(exportFileName) },
+                        enabled = !exportingLogs,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            stringResource(
+                                if (exportingLogs) R.string.settings_exporting
+                                else R.string.settings_export_logs,
+                            ),
+                        )
+                    }
+                    val logDirectory = container.diagnostics.logDirectoryPath()
+                    if (!logDirectory.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.settings_logs_location, logDirectory),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = InkFaint,
+                        )
                     }
                 }
 
