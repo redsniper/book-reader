@@ -331,7 +331,7 @@ ui (Compose + MVVM) → domain ← data / platform
 - 设计文档、实施计划、黑盒测试指南、README 已交付。
 - 145 项单元/Robolectric 集成测试通过，0 失败（含页索引缓存/重开/跳页、隐藏会话后台锁定、视口字号度量、首开单次分页、诊断日志滚动/节流、M17 下拉状态机与 2/3 屏阈值/橡皮筋位移映射）。
 - Lint 0 Error / 57 Warning。
-- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`，版本 `1.1.0`（versionCode 2，Debug 版本名 `1.1.0-debug`），约 26 MB；设置页可导出诊断日志。
-- 提交：见 `git log`（最新提交为 `d6f7300 build: 版本号升至 1.1.0 并重新打包`）；M17 的下拉阈值变更与文档更新在工作区，尚未提交。
+- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`，版本 `1.2.0`（versionCode 3，Debug 版本名 `1.2.0-debug`），约 26 MB；设置页可导出诊断日志。
+- 提交：见 `git log`；M17 的 2/3 屏阈值变更与 1.2.0 版本升级已提交。
 - 黑盒验收：`moyue_api35` 模拟器已执行 BB-01～BB-22（首轮 BB-19～21 失败，M13 修复后复测通过；M15 修复后 BB-22 复测通过）；M17 的 2/3 屏静默阈值、提示淡入、松手触发与回弹已在模拟器截图核对（1500px 无提示、约 1650px 提示出现；复核基于 5:44/5:50 的健康渲染窗口，之后模拟器出现 100% 掉帧、位移帧不刷新的异常），阈值震感、2/3 屏行程单手可达性与跟手手感待 Xiaomi 15 Ultra 真机复核；真机还需复核视觉/手势/真实 PDF 渲染与百万字首开耗时。
 - 测试源码保留在本地但不纳入 Git；这是当前仓库的明确要求。
