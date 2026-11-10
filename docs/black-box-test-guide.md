@@ -8,6 +8,7 @@
 | --- | --- |
 | 设备 | Xiaomi 15 Ultra（HyperOS 3.0.314.0 及以上）优先；或 Android 模拟器 API 35+ |
 | 应用 | Debug APK：`app/build/outputs/apk/debug/app-debug.apk` |
+| 应用版本 | `1.1.0`（versionCode 2，Debug 版本名 `1.1.0-debug`；文中 1.0.0-debug 为历史记录） |
 | 包名 | `com.moyue.reader.debug` |
 | 启动 Activity | `com.moyue.reader.debug/com.moyue.reader.MainActivity` |
 | 数据 | TXT、EPUB、文本型 PDF、扫描版 PDF 各准备 1 本；另准备 1 个损坏文件 |
