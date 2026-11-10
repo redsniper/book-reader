@@ -14,17 +14,23 @@ package com.moyue.reader.domain.service
  *
  * 关键行为：
  * - 只有书架处于顶部且手指向下拖动时才累计位移，避免普通滚动误触发；
- * - 达到阈值后进入 [Phase.ARMED]，但**不立即触发**，必须等用户松手，
+ * - 阈值由 UI 按“整窗高度 2/3”换算后传入（见 [thresholdPxForWindowHeight]），
+ *   不再使用固定 dp：隐藏入口的“大幅下拉”体感应在不同尺寸设备上保持一致，
+ *   同时把随手发现与误触概率降到最低；
+ * - 未达阈值时只有 [visualOffsetPx] 驱动的橡皮筋跟手位移，**没有任何提示或震动**；
+ *   达到阈值后进入 [Phase.ARMED]，但**不立即触发**，必须等用户松手，
  *   防止“刚够阈值就弹窗”打断手势，也避免按住不放时反复触发；
- * - [visualOffsetPx] 使用橡皮筋曲线而不是线性位移，让内容“越拉越沉”；
- * - [progress] 仍按原始位移线性计算，保证进度环在阈值处刚好填满。
+ * - [visualOffsetPx] 使用橡皮筋曲线而不是线性位移，让内容“越拉越沉”，
+ *   并以固定上限保证 2/3 屏的长距离拖动不会把书架推离屏幕；
+ * - [progress] 仍按原始位移线性计算，表达“距离阈值还差多少”，便于测试与诊断；
+ *   UI 不再用它渲染进度环：阈值前必须无提示，越过阈值后圆环固定为满。
  *
  * 该类不持有协程、不访问 Android API；UI 层只需把纵向 overscroll 传入，
- * 并读取 [progress]、[visualOffsetPx] 渲染即可。
+ * 并读取 [visualOffsetPx] 渲染跟手位移、读取 [isArmed] 决定是否显示提示。
  */
 class PullDownUnlockDetector(
     private val thresholdPx: Float,
-    private val maxVisualOffsetPx: Float = thresholdPx * DEFAULT_MAX_OFFSET_RATIO,
+    private val maxVisualOffsetPx: Float,
 ) {
 
     enum class Phase {
@@ -46,9 +52,9 @@ class PullDownUnlockDetector(
     var phase: Phase = Phase.IDLE
         private set
 
-    /** 线性进度 0..1；用于进度环，阈值处正好为 1。 */
+    /** 线性进度 0..1；用于表达距离阈值的比例，阈值处正好为 1。 */
     val progress: Float
-        get() = (accumulatedPx / thresholdPx).coerceIn(0f, 1f)
+        get() = if (thresholdPx <= 0f) 1f else (accumulatedPx / thresholdPx).coerceIn(0f, 1f)
 
     val isArmed: Boolean
         get() = phase == Phase.ARMED
@@ -61,7 +67,8 @@ class PullDownUnlockDetector(
      * - 位移越大，分母增长越快，跟手比例逐渐下降；
      * - 渐近线为 [maxVisualOffsetPx]，不会无限下移。
      *
-     * 阈值处的位移约为 0.36 × max（默认约 90dp），足以完整露出顶部提示。
+     * 阈值处约为渐近线的 84%：以 2/3 屏为阈值时约 100dp，足以完整露出顶部提示层
+     * （提示层约 74dp，系统字体放到 2.0 倍时约 90dp）。
      */
     val visualOffsetPx: Float
         get() {
@@ -105,15 +112,33 @@ class PullDownUnlockDetector(
     }
 
     companion object {
-        /** 触发阈值：140dp，按当前屏幕密度换算成像素后构造。 */
-        const val DEFAULT_THRESHOLD_DP = 140f
+        /**
+         * 解锁阈值相对整窗高度的比例：2/3 屏。
+         *
+         * 之所以按屏幕比例而不是固定 dp：隐藏书架是“界面隐藏”，入口越隐蔽越好；
+         * 固定 140dp 在 6.7 英寸屏上只占约 1/7，随手一拉就会亮出提示。
+         */
+        const val THRESHOLD_SCREEN_RATIO = 2f / 3f
 
         /**
-         * 视觉位移渐近线相对阈值的比例。
+         * 跟手位移的渐近线上限（dp）。
          *
-         * 取 1.8 使阈值处约有 90dp 位移：既能完整露出锁形提示与文案，
-         * 又不会因为继续拖动把书架推得过远。
+         * 固定 120dp 而不是按阈值放大：阈值变成 2/3 屏后，若仍用“1.8 × 阈值”，
+         * 书架会被推走一屏以上。120dp 的上限保证长距离拖动时内容最多下移一条
+         * 提示带的高度，阈值处（约 100dp）刚好露出提示（含 2.0 倍字体），
+         * 又不会让书架离开屏幕。
          */
-        const val DEFAULT_MAX_OFFSET_RATIO = 1.8f
+        const val MAX_VISUAL_OFFSET_DP = 120f
+
+        /**
+         * 由实测窗口像素高度换算下拉阈值。
+         *
+         * 高度必须包含状态栏与导航栏（书架根布局是 edge-to-edge 的整窗），
+         * 这样“2/3 个屏幕”才与用户的行进距离一致。
+         */
+        fun thresholdPxForWindowHeight(windowHeightPx: Int): Float {
+            if (windowHeightPx <= 0) return 0f
+            return windowHeightPx * THRESHOLD_SCREEN_RATIO
+        }
     }
 }

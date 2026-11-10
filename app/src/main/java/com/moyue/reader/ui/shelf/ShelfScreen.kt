@@ -9,8 +9,12 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -69,6 +73,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -81,13 +86,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -138,8 +143,9 @@ import kotlinx.coroutines.launch
  * - 普通模式支持导入、编辑、隐藏、删除；
  * - 隐藏模式仅展示 hidden=true 的书籍，并提供退出入口。
  *
- * 下拉解锁由 NestedScrollConnection 捕获书架顶部的 overscroll，
- * 达到 140dp 阈值后弹出密码框。
+ * 下拉解锁由 NestedScrollConnection 捕获书架顶部的 overscroll：
+ * 阈值是整窗高度的 2/3；阈值前只跟手下移、不显示任何提示，越过阈值才淡入提示，
+ * 松手后弹出密码框。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -190,10 +196,16 @@ fun ShelfScreen(
     }
 
     val density = LocalDensity.current
-    val thresholdPx = with(density) {
-        PullDownUnlockDetector.DEFAULT_THRESHOLD_DP.dp.toPx()
+    // 书架根布局是 edge-to-edge 的整窗，onSizeChanged 报告的才是含系统栏的真实窗口高度；
+    // 首帧高度未知时阈值为 0，但用户不可能在布局完成前开始拖动。
+    var windowHeightPx by remember { mutableIntStateOf(0) }
+    val thresholdPx = PullDownUnlockDetector.thresholdPxForWindowHeight(windowHeightPx)
+    val maxVisualOffsetPx = with(density) {
+        PullDownUnlockDetector.MAX_VISUAL_OFFSET_DP.dp.toPx()
     }
-    val detector = remember(thresholdPx) { PullDownUnlockDetector(thresholdPx) }
+    val detector = remember(thresholdPx, maxVisualOffsetPx) {
+        PullDownUnlockDetector(thresholdPx, maxVisualOffsetPx)
+    }
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     // 隐藏书架首次数据到达后的淡入上浮进度；1 表示完全显示。
@@ -202,14 +214,10 @@ fun ShelfScreen(
     // 只有“普通书架 -> 隐藏书架”的真实切换才应播放一次进入转场。
     var lastModeName by rememberSaveable { mutableStateOf(state.mode.name) }
     var entryAnimationPending by rememberSaveable { mutableStateOf(false) }
-    // 位移与进度只在布局/绘制阶段读取，拖动时不会触发整页重组；
-    // armed 是布尔值，只在越过/退出阈值时改变一次，重组代价可以忽略。
+    // 位移只在布局阶段读取，拖动时不会触发整页重组；armed 是布尔值，只在越过/退出
+    // 阈值时改变一次，重组代价可以忽略。阈值前 armed 恒为 false，提示层根本不参与组合。
     var pullOffset by remember { mutableFloatStateOf(0f) }
-    var pullProgress by remember { mutableFloatStateOf(0f) }
     var pullArmed by remember { mutableStateOf(false) }
-    // 提示层只在拖动/回弹期间参与组合：静止时连同无障碍语义一起移除，避免读屏
-    // 在普通书架上读出“继续下拉进入隐藏书架”。
-    var pullVisible by remember { mutableStateOf(false) }
     var settleJob by remember { mutableStateOf<Job?>(null) }
     val gridState = rememberLazyGridState()
     val currentMode by rememberUpdatedState(state.mode)
@@ -219,14 +227,11 @@ fun ShelfScreen(
      *
      * 使用 Compose 的帧时钟驱动单个浮点状态，避免为每个拖动事件创建协程；
      * 回弹期间若再次下拉，调用方会取消该任务，由状态机按新的手势位移接管。
+     * 提示层在回弹开始时立即淡出，不跟着手指位移一起滑走。
      */
     fun settlePull() {
-        if (pullOffset <= 0f) {
-            pullProgress = 0f
-            pullArmed = false
-            pullVisible = false
-            return
-        }
+        pullArmed = false
+        if (pullOffset <= 0f) return
         settleJob?.cancel()
         settleJob = scope.launch {
             animate(
@@ -235,9 +240,6 @@ fun ShelfScreen(
                 animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
             ) { value, _ -> pullOffset = value }
             pullOffset = 0f
-            pullProgress = 0f
-            pullArmed = false
-            pullVisible = false
         }
     }
 
@@ -254,18 +256,15 @@ fun ShelfScreen(
                     gridState.firstVisibleItemScrollOffset == 0
                 val wasArmed = detector.isArmed
                 if (!detector.onDrag(available.y, atTop)) {
-                    // 离开顶部或反向滚动：把已经拉出的内容弹回去。
-                    if (pullOffset > 0f) settlePull()
+                    // 离开顶部或反向滚动：把已经拉出的内容弹回去，并立即撤掉提示。
+                    if (pullOffset > 0f || pullArmed) settlePull()
                     return Offset.Zero
                 }
 
                 // 手指重新接管时，必须停止上一次回弹，避免两个动画争抢位移。
                 settleJob?.cancel()
-                pullVisible = true
-                pullProgress = detector.progress
                 pullOffset = detector.visualOffsetPx
-                // 无条件同步：回弹任务被取消时 completion 不会执行，若只在越过阈值时
-                // 赋值，重新下拉会残留“松开进入”的开锁态。
+                // 阈值前 pullArmed 恒为 false，提示层不参与组合；越过阈值那一帧才出现。
                 pullArmed = detector.isArmed
                 if (!wasArmed && detector.isArmed) {
                     // 只在“刚刚越过阈值”的那一帧震动，按住不放不会连续震。
@@ -309,10 +308,18 @@ fun ShelfScreen(
         settleJob = null
         detector.reset()
         pullOffset = 0f
-        pullProgress = 0f
         pullArmed = false
-        pullVisible = false
         gridState.scrollToItem(0)
+    }
+
+    // 窗口尺寸变化（旋转、分屏、折叠）会重算阈值并重建检测器；进行中的手势必须复位，
+    // 否则累计位移会按旧阈值继续判定，松手时可能误触发。
+    LaunchedEffect(thresholdPx, maxVisualOffsetPx) {
+        detector.reset()
+        settleJob?.cancel()
+        settleJob = null
+        pullOffset = 0f
+        pullArmed = false
     }
 
     // 只在模式真实切换时标记待播放转场；导航重建（如从隐藏阅读器返回）不会误触发。
@@ -375,6 +382,9 @@ fun ShelfScreen(
         Box(
             Modifier
                 .fillMaxSize()
+                // Scaffold 的 contentWindowInsets 为 0，这里的尺寸就是含系统栏的整窗高度；
+                // 阈值按它计算，保证“2/3 个屏幕”与用户手指能走到的距离一致。
+                .onSizeChanged { windowHeightPx = it.height }
                 .background(
                     Brush.verticalGradient(
                         0f to Paper,
@@ -392,14 +402,19 @@ fun ShelfScreen(
                 )
 
                 Box(Modifier.weight(1f)) {
-                    // 提示层必须画在网格下面：网格下移后才露出来，静止时不参与组合。
-                    if (state.mode == ShelfMode.NORMAL && pullVisible) {
-                        PullDownBackdrop(
-                            progress = { pullProgress },
-                            armed = pullArmed,
-                            offsetPx = { pullOffset },
+                    // 提示层必须画在网格下面：网格下移后才露出来；阈值前不参与组合，
+                    // 因此读屏在普通书架上不会读到隐藏入口文案。
+                    if (state.mode == ShelfMode.NORMAL) {
+                        // 外层 Column 提供了 ColumnScope 隐式接收者，必须显式指定
+                        // 顶层的 AnimatedVisibility，否则会解析到 ColumnScope 扩展版本。
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = pullArmed,
                             modifier = Modifier.align(Alignment.TopCenter),
-                        )
+                            enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.9f),
+                            exit = fadeOut(tween(120)),
+                        ) {
+                            PullDownBackdrop()
+                        }
                     }
 
                     LazyVerticalGrid(
@@ -823,53 +838,37 @@ private fun HiddenEmptyState() {
 /**
  * 下拉解锁的顶部提示层。
  *
- * 它位于网格下方，网格未下移时完全透明；随着下拉距离增大，锁形圆环逐渐显露并放大。
- * `progress`/`offsetPx` 使用 lambda 传递，让状态读取发生在绘制阶段，
- * 手指拖动时只重绘这一层，不会重组整个书架。
+ * 只有在越过阈值、状态机进入 `ARMED` 后才参与组合：淡入 / 淡出由外层
+ * [AnimatedVisibility] 负责，内容本身是静态的“开锁圆环 + 松开进入”，不做进度填充。
+ * 之所以不在阈值前显示进度环或“继续下拉”文案，是需求方确认的隐藏入口规则：
+ * 未达阈值时书架只跟手移动，屏幕不能出现任何“可以进入”的提示。
  */
 @Composable
 private fun PullDownBackdrop(
-    progress: () -> Float,
-    armed: Boolean,
-    offsetPx: () -> Float,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier
-            .padding(top = 4.dp)
-            .graphicsLayer {
-                val offset = offsetPx()
-                val value = progress()
-                // 网格刚挪开几像素时淡入，避免静止状态透出提示层。
-                alpha = (offset / 28.dp.toPx()).coerceIn(0f, 1f)
-                scaleX = 0.74f + 0.26f * value
-                scaleY = 0.74f + 0.26f * value
-            },
+        modifier = modifier.padding(top = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(
-                progress = progress,
-                modifier = Modifier.fillMaxSize(),
-                color = if (armed) Cinnabar else Cinnabar.copy(alpha = 0.72f),
-                trackColor = PaperLine,
-                strokeWidth = 3.dp,
-                strokeCap = StrokeCap.Round,
-            )
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .border(3.dp, Cinnabar, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(
-                imageVector = if (armed) Icons.Outlined.LockOpen else Icons.Outlined.Lock,
+                imageVector = Icons.Outlined.LockOpen,
                 contentDescription = null,
-                tint = if (armed) Cinnabar else InkSoft,
-                modifier = Modifier.size(19.dp),
+                tint = Cinnabar,
+                modifier = Modifier.size(18.dp),
             )
         }
-        Spacer(Modifier.height(7.dp))
+        Spacer(Modifier.height(6.dp))
         Text(
-            text = stringResource(
-                if (armed) R.string.shelf_pull_release else R.string.shelf_pull_hint,
-            ),
+            text = stringResource(R.string.shelf_pull_release),
             style = MaterialTheme.typography.labelMedium,
-            color = if (armed) Cinnabar else InkSoft,
+            color = Cinnabar,
             letterSpacing = 0.4.sp,
         )
     }

@@ -11,7 +11,6 @@
     <string name="shelf_import">导入书籍</string>
     <string name="shelf_settings">设置</string>
     <string name="shelf_progress">已读 %1$d%% · %2$s</string>
-    <string name="shelf_pull_hint">继续下拉进入隐藏书架</string>
     <string name="shelf_hidden_session">隐藏书架 · 仅本次会话可见</string>
     <string name="shelf_exit_hidden">退出隐藏书架</string>
     <string name="shelf_book_edit">书籍编辑</string>
