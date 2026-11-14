@@ -182,4 +182,6 @@ scripts/
 
 ## 许可
 
-本项目为私有交付项目，未附带开源许可证。
+本项目以 [MIT License](LICENSE) 开源，Copyright (c) 2026 MoYue contributors。
+
+你可以自由使用、修改、商用与再分发，只需保留版权声明与许可声明。项目使用的第三方组件（如 Apache PDFBox、AndroidX、Compose、Room、jsoup 等）仍遵循各自许可证，不因本项目的 MIT 协议而改变。
