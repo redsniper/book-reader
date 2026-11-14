@@ -26,6 +26,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+                外部“用其他应用打开”（文件管理器/聊天应用的长按菜单）。
+                系统 chooser 只列出静态匹配的应用：发送方的 MIME 不在此列表且不是
+                application/octet-stream 时，本应用不会出现，运行时无法补救。
+                不声明 */*：避免图片、视频、安装包等无关文件都出现“墨阅”候选。
+                多个 <data> 的属性会按 scheme × mimeType 交叉合并，所以 scheme 与 type
+                各自单独成行即可（也避免 Lint 的 IntentFilterUniqueDataAttributes 告警）。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
         </activity>
     </application>
 

@@ -24,6 +24,13 @@
 - 多选导入、按 SHA-256 去重、删除确认、最近阅读排序。
 - 长按或卡片“⋯”进入书籍编辑：隐藏到隐藏书架 / 移出隐藏书架 / 删除。
 
+### 从其他应用直接打开
+- 在系统文件管理器或聊天应用里选中 TXT / EPUB / PDF，点“用其他应用打开”，候选列表会出现“墨阅”；选中后自动导入并进入阅读器，不需要先打开应用再走文件选择器。
+- 支持 `content://` 与 `file://`；除 `text/plain`、`application/epub+zip`、`application/pdf` 外，也声明了 `application/octet-stream` 兜底“文件管理器不认识的文件类型”。不声明 `*/*`，因此图片、视频、安装包不会多出墨阅候选。
+- 已导入过的文件只提示“该文件已在书架中”，不重复导入；为保护隐藏书架，提示里不显示书名，也不会自动打开。
+- 导入失败（不支持/过大/加密/损坏/无可读文字/读取失败）会弹窗说明原因，不残留临时文件。
+- 应用在后台或正在阅读时再次“打开”文件同样生效：系统把新 Intent 交给已有实例，导入完成后切换到新书。
+
 ### 隐藏书架
 - 普通书架顶部下拉**整屏高度的 1/2** 才出现进入提示：阈值前书架只跟手阻尼下移（最多约 120dp），没有进度环、文案或震动；越过阈值轻震一次并淡入“松开进入隐藏书架”，松手才弹密码框；未达阈值、短距离下拉或中途上滑会弹簧回位且不弹框。由于仍需大幅下拉，需从屏幕中部或更上方起手。
 - 密码通过后隐藏书架淡入上浮；仅本次前台会话有效，切到后台（Home/最近任务/锁屏）立即锁定，返回需重新输入密码。
@@ -94,7 +101,7 @@ platform-tools
 
 APK 输出：`app/build/outputs/apk/debug/app-debug.apk`
 
-当前版本：`1.3.0`（versionCode 4；Debug 版本名 `1.3.0-debug`，包名 `com.moyue.reader.debug`）。
+当前版本：`1.4.0`（versionCode 5；Debug 版本名 `1.4.0-debug`，包名 `com.moyue.reader.debug`）。
 
 安装到设备/模拟器：
 
@@ -105,7 +112,7 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
 
 ## 测试
 
-- 148 项 JVM/Robolectric 测试全部通过，覆盖：
+- 158 项 JVM/Robolectric 测试全部通过，覆盖：
   - 编码探测、文本规范化、自动分章、页索引、进度换算；
   - PBKDF2 密码哈希、失败节流、下拉解锁状态机与橡皮筋位移映射；
   - 真实 Room DAO、DataStore、SharedPreferences；
@@ -116,7 +123,8 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
   - 页索引文件缓存（往返、签名失效、损坏回退、LRU、删除级联）；
   - 阅读视口/字号度量与分页同源（Compose 解析 px 驱动重排、系统字体缩放）；
   - 首开分页时序：Loading 阶段的默认视口被丢弃，真实设置发布后只分页一次，非默认字号重开位置不漂移；
-  - StaticLayout 分页器（Robolectric 原生图形）。
+  - StaticLayout 分页器（Robolectric 原生图形）；
+  - 外部打开：`ACTION_VIEW` 解析（非 VIEW / http / 无 data 均忽略）、清单过滤器可被系统按四种 MIME 查询到且不劫持图片视频、串行导入、成功自动打开、重复提示脱敏、MIME 兜底、格式不支持复用导入文案。
 - **按仓库要求，测试源码不纳入 Git 跟踪**（见 `.gitignore` 的 `app/src/test/`、`app/src/androidTest/`）；本地工作区仍保留完整测试。
 - 测试报告：`app/build/reports/tests/testDebugUnitTest/index.html`
 
@@ -149,11 +157,11 @@ UI (Compose + MVVM) → domain ← data / platform
 
 ```
 app/src/main/java/com/moyue/reader/
-├── core/            # 调度器、时钟
+├── core/            # 调度器、时钟、外部打开请求队列
 ├── domain/          # 模型、仓库接口、解析契约、领域服务
 ├── data/            # Room、DataStore、文件、页索引缓存、解析器、诊断日志
 ├── platform/        # 分页、PDF 文本/渲染适配
-└── ui/              # 书架、阅读器、设置、导航、主题
+└── ui/              # 书架、阅读器、设置、导航、主题、外部打开浮层
 docs/
 ├── design.md
 ├── implementation-plan.md
@@ -181,6 +189,7 @@ scripts/
 - 单文件限制：TXT/EPUB ≤ 40 MB，PDF ≤ 300 MB。
 - 阅读设置中的字体族使用系统字体，暂不支持导入字体文件。
 - 页索引缓存只保存在本机应用私有目录；清除应用数据、重装、修改源文件或升级页边界算法后，首次打开会重新排版。
+- “用其他应用打开”依赖发送方给出的 MIME：若不在 `text/plain`、`application/epub+zip`、`application/pdf`、`application/octet-stream` 之内（例如少数应用硬编码 `*/*` 或自定义类型），系统不会把墨阅列入候选，这是 Android 的静态匹配规则，应用无法在运行时补救。此时可先打开墨阅，再用书架内的“导入书籍”。本版不支持“分享到墨阅”（`ACTION_SEND`）。
 
 ## 许可
 

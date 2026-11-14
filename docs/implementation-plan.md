@@ -31,6 +31,7 @@
 | M18 | 开发环境路径集中管理 | P1 | [x] |
 | M19 | 隐藏书架下拉阈值改为 1/2 屏 | P0 | [x] |
 | M20 | EPUB 加密误判与 NCX DOCTYPE 兼容修复 | P0 | [x] |
+| M21 | 外部“用其他应用打开”（ACTION_VIEW）入口 | P1 | [x] |
 
 ---
 
@@ -417,6 +418,52 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
 
 ---
 
+## M21 · 外部“用其他应用打开”入口（P1，已完成）
+
+用户反馈（2026-11-14，真机）：在系统文件管理器中选中 TXT/EPUB/PDF 点“用其他应用打开”，
+候选列表里没有墨阅。根因是 `AndroidManifest.xml` 只声明了 `MAIN/LAUNCHER`，从未注册
+`ACTION_VIEW` 过滤器；系统 chooser 只列出静态匹配的应用，因此无论如何都找不到墨阅。
+产品口径确认为“支持外部打开并自动进入阅读器”（设计 §2 D-05、§10.8）。
+
+| # | 任务 | 验收标准 | 状态 |
+| --- | --- | --- | --- |
+| M21-1 | 清单注册 `ACTION_VIEW` + `DEFAULT`：`content`/`file` × `text/plain`、`application/epub+zip`、`application/pdf`、`application/octet-stream` | `cmd package query-activities` 能查到 `MainActivity`；图片/视频等无关 MIME 仍不出现 | [x] |
+| M21-2 | `MainActivity` 接收意图：冷启动（`savedInstanceState == null`）与 `onNewIntent`；忽略 MAIN/http/SEND；旋转重投递不重复处理 | 冷启动与热启动均能导入一次；旋转、分屏不重复导入 | [x] |
+| M21-3 | `core/ExternalOpenQueue` 进程内队列 + 根级 `ExternalOpenViewModel` 串行消费；`content://` 立即读取并复制 | 连续打开两个文件按顺序处理，不并发 | [x] |
+| M21-4 | 结果映射：成功自动进入阅读器；重复给通用提示（不显示书名、不打开）；失败复用既有错误文案 | 四类路径均有自动化测试覆盖 | [x] |
+| M21-5 | 根级导入进度/错误对话框；`external.open` 诊断日志（仅 scheme/mime/size/result） | 无敏感信息；UI 可关闭错误 | [x] |
+| M21-6 | 单元测试：Intent 读取、清单可查询性、ViewModel 成功/重复/失败/串行 | 全量测试通过，0 失败 | [x] |
+| M21-7 | 文档同步（设计、README、黑盒 BB-24、AGENTS 决策）；Lint 0 Error、assembleDebug 成功 | 质量门禁全绿 | [x] |
+
+
+**验收结果（2026-11-14）**：
+- 根因：`AndroidManifest.xml` 只声明 `MAIN/LAUNCHER`；系统 chooser 由 `ACTION_VIEW` + MIME 的静态匹配生成，
+  未注册过滤器时墨阅不可能出现，与文件管理器或系统版本无关。
+- 实现：清单注册 `VIEW` + `DEFAULT`（`content`/`file` × `text/plain`、`application/epub+zip`、
+  `application/pdf`、`application/octet-stream`）；`MainActivity` 处理冷启动与 `onNewIntent`；
+  `ExternalOpenQueue` 进程内串行队列；根级 `ExternalOpenViewModel` 复用 `BookImportService`；
+  成功后自动进入阅读器，重复只提示“该文件已在书架中”（不显示书名、不打开），失败复用既有文案。
+- 自动化：`./gradlew testDebugUnitTest` **158 项通过、0 失败**（新增 10 项：Intent 解析/清单查询 5 项、
+  外部打开 ViewModel 5 项）。
+- 静态检查：`./gradlew lintDebug` **0 Error**；`./gradlew assembleDebug` 成功，版本 `1.4.0`（versionCode 5）。
+- 模拟器（`moyue_api35`，Android 15，1344×2992 @480dpi，Debug `1.4.0-debug`）：
+  `cmd package query-activities` 对四种 MIME 均返回 `com.moyue.reader.MainActivity`，`image/jpeg` 不返回；
+  系统“打开方式”chooser 中出现“墨阅”；冷启动打开 TXT 后自动导入（2 章 / 6 页）并进入阅读器；
+  热启动（`onNewIntent`，阅读器内 + 设置页）导入 EPUB/TXT 后日志 `reader.open` 指向新书；
+  重复打开同一文件弹出“无法打开文件 / 该文件已在书架中”，书架数量不变且提示不含书名。
+  诊断日志只写入 `external.open`（scheme/mime）与 `external.done`（result/size）。
+- 已知限制与验证边界：`adb shell am start` 向应用授予 `content://` 读权限会被系统拒绝
+  （`UriGrantsManagerService` 安全限制），端到端改用应用私有目录的 `file://` URI；`content://` 的清单匹配
+  由 Robolectric 查询覆盖，读取路径与 SAF 导入共用 `AndroidDocumentResolver`。模拟器期间出现过一次
+  SurfaceFlinger 帧不刷新（仓库已记录的模拟器异常），导航后画面停在旧书但日志显示新 Reader 已创建；
+  **Xiaomi 15 Ultra 真机与 HyperOS 文件管理器的“打开方式”需用户按 BB-24 复核**。
+
+**已知边界**：发送方给出的 MIME 不在声明列表时系统不会列出墨阅，这是 Android 静态匹配规则，
+应用无法在运行时补救；`application/octet-stream` 已兜底“未知类型”，代价是无扩展名文件也会出现候选，
+导入时以“不支持的格式/文件损坏”拒绝。本版不做 `ACTION_SEND`（分享进入）。
+
+---
+
 ## 实施顺序说明
 
 1. **先做 M0–M3**：数据、解析、分页是阅读器的地基；先以单元测试锁定正确性，避免 UI 返工。
@@ -426,18 +473,21 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
 
 ## 当前状态（2026-11-14）
 
-- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制；M11 的分页缓存与跳页重排优化；M12 的 BB-15 隐藏会话返回路径修复；M13 的 BB-19～BB-21 视口/字号修复；M14 的真机诊断日志与安装包；M15 的字号设置面板塌陷与重开位置漂移修复；M16 的隐藏书架下拉动画与进入转场；M17 的隐藏书架下拉改为 2/3 屏静默阈值；M18 的开发环境路径集中管理；M19 的隐藏书架下拉阈值改为 1/2 屏；M20 的 EPUB 加密误判与 NCX DOCTYPE 兼容修复。
+- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制；M11 的分页缓存与跳页重排优化；M12 的 BB-15 隐藏会话返回路径修复；M13 的 BB-19～BB-21 视口/字号修复；M14 的真机诊断日志与安装包；M15 的字号设置面板塌陷与重开位置漂移修复；M16 的隐藏书架下拉动画与进入转场；M17 的隐藏书架下拉改为 2/3 屏静默阈值；M18 的开发环境路径集中管理；M19 的隐藏书架下拉阈值改为 1/2 屏；M20 的 EPUB 加密误判与 NCX DOCTYPE 兼容修复；M21 的外部“用其他应用打开”入口。
 - M18 验证（2026-11-14）：`.env.example`、`scripts/dev-env.sh`、`scripts/blackbox.sh`、`scripts/check-no-local-paths.sh` 已加入；本机路径只存在于 gitignore 的 `.env.local`，`local.properties` 的 `sdk.dir` 由 `ANDROID_HOME` 派生；bash/zsh source、旧 `.toolchain` 兼容入口、缺少配置时的报错与黑盒函数均已验证；夹具生成器改用 `MOYUE_CJK_FONT`；路径检查 0 输出。
 - M19 验证（2026-11-14）：阈值由整窗高度 2/3 改为 1/2（1080×2400 / 420dpi 约 1200px；`moyue_api35` 实际 1344×2992 / 480dpi 约 1496px），阈值处跟手位移约 249.5px（95dp）；静默段、松手触发、单次轻震、120dp 上限与进入转场保持不变。模拟器复测 1450px 不触发、1550px 触发，按住可见提示、松手弹框；震感与真机手感待复核。
-- 自动化验证：`./gradlew testDebugUnitTest` **148 项测试通过，0 失败**（含 Room/Robolectric 集成、真实 PDFBox PDF、StaticLayout 分页、页索引文件缓存、三个 ViewModel、隐藏会话后台锁定、首开视口时序、下拉状态机、1/2 屏阈值与橡皮筋位移映射、M20 的 EPUB 加密清单与 NCX DOCTYPE 兼容）。
+- 自动化验证：`./gradlew testDebugUnitTest` **158 项测试通过，0 失败**（含 Room/Robolectric 集成、真实 PDFBox PDF、StaticLayout 分页、页索引文件缓存、三个 ViewModel、隐藏会话后台锁定、首开视口时序、下拉状态机、1/2 屏阈值与橡皮筋位移映射、M20 的 EPUB 加密清单与 NCX DOCTYPE 兼容、M21 的外部打开意图解析/清单查询/串行导入/重复脱敏）。
 - 模拟器验证（`moyue_api35`，Android 15）：隐藏书阅读中按 Home 后，经最近任务、桌面图标返回均显示锁定提示；桌面图标不再叠加新 Activity；隐藏书架后台返回显示“隐藏书架已锁定”对话框；旋转保持会话；进程强制停止后重启不直达隐藏内容。
 - M16 模拟器验证（`moyue_api35`，1080×2400 / 420dpi，2026-11-08）：长距离下拉时网格跟手下移、越过阈值开锁并切换文案、松手弹密码框且弹簧回位；300px 短下拉只回弹不弹框；正确密码后逐帧录屏确认隐藏书架内容从接近透明淡入。模拟器无触觉硬件，震感待真机复核。
 - M17 模拟器验证（`moyue_api35`，1080×2400 / 420dpi，2026-11-10）：阈值 = 整屏 2/3 ≈ 1600px；累计下拉 800px / 1500px 时书架只跟手下移，顶部无圆环、无文案、无震动；累计 1700px 时提示淡入，松手弹出密码框。短距离下拉与越过阈值后反向上滑均只回弹、不弹框。截图核对了 800/1200/1500/1580/1620/1700px 六个阶段。模拟器无触觉硬件，震感待真机复核。
 - M15 模拟器复测（`moyue_api35`，2026-11-08）：24sp 下第 24/37 页返回书架再重开仍为第 24/37 页，日志仅一次 `pagination.done`（缓存命中、字号 px 与锚点一致）；拖动字号时设置面板保持全展开，滑块纵坐标不变；预览卡片固定 132dp。真机视觉/手势仍需用户复核。
-- 构建产物：`app/build/outputs/apk/debug/app-debug.apk`，版本 `1.3.0`（versionCode 4，Debug 版本名 `1.3.0-debug`），约 26 MB，package `com.moyue.reader.debug`；安装后可在设置页导出诊断日志。
+- 构建产物：`app/build/outputs/apk/debug/app-debug.apk`，版本 `1.4.0`（versionCode 5，Debug 版本名 `1.4.0-debug`），约 26 MB，package `com.moyue.reader.debug`；安装后可在设置页导出诊断日志。
 - 版本升级（2026-11-10，第二次）：`versionCode 2 → 3`、`versionName 1.1.0 → 1.2.0`（下拉阈值与提示时机按用户要求变更，按次版本号升级）；本轮重新打包 Debug APK，145 项测试与 Lint 结果不变。更早的 `1.0.0 → 1.1.0` 为下拉动画特性升级。
 - 版本升级（2026-11-14，第三次）：`versionCode 3 → 4`、`versionName 1.2.0 → 1.3.0`（下拉阈值由 2/3 屏改为 1/2 屏，用户可见行为变更，按次版本号升级）；重新打包 Debug APK，145 项测试与 Lint 结果不变。
-- 静态检查：`./gradlew lintDebug` **0 Error / 57 Warning**，报告 `app/build/reports/lint-results-debug.html`。
+- 静态检查：`./gradlew lintDebug` **0 Error / 56 Warning**，报告 `app/build/reports/lint-results-debug.html`。
+- M21 验证（2026-11-14，`moyue_api35`）：清单过滤器可被系统按四种 MIME 解析、“打开方式”出现墨阅、
+  冷/热启动导入后自动进入阅读器、重复文件提示脱敏；`content://` 端到端受 adb 授权限制改用 `file://`，
+  真机文件管理器与 `content://` 需用户按 BB-24 复核。模拟器另有一次帧不刷新（已知异常）。
 - 待用户复测：模拟器已执行 BB-01～BB-22；M20 的 BB-23 已改用生成的 `加密清单无效.epub`（陈旧加密清单 + NCX DOCTYPE）并在 `moyue_api35` 通过（3 章/81 字/3 页），正文加密对照仍拒绝；历史真实样本的模拟器结果（970 章/8152 页）保留在上面的验收记录中，建议在 Xiaomi 15 Ultra 上用生成夹具再走一遍；M17 的 2/3 屏静默阈值历史验证见上；M19 已将阈值下调为
   1/2 屏，并在 `moyue_api35`（实际 1344×2992 / 480dpi，约 1496px）复测：1450px 不触发、1550px 触发，
   按住可见提示、松手弹框。模拟器无触觉硬件，震感与真机手感待复核；半屏行程仍建议从屏幕中部或更上方起手，

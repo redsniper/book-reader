@@ -26,6 +26,13 @@
     <string name="shelf_cancel">取消</string>
     <string name="shelf_confirm">确定</string>
 
+    <!-- 外部打开（其他应用 ACTION_VIEW） -->
+    <string name="external_open_importing">正在导入《%1$s》…</string>
+    <string name="external_open_importing_unknown">正在导入…</string>
+    <string name="external_open_duplicate">该文件已在书架中</string>
+    <string name="external_open_error_title">无法打开文件</string>
+    <string name="external_open_unsupported_uri">无法读取该文件，请先用应用内“导入书籍”打开</string>
+
     <!-- 阅读器 -->
     <string name="reader_toc">目录</string>
     <string name="reader_settings">阅读设置</string>

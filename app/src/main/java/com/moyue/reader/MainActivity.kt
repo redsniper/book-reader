@@ -1,5 +1,6 @@
 package com.moyue.reader
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import com.moyue.reader.ui.external.ExternalOpenIntentReader
 import com.moyue.reader.ui.navigation.MoYueNavHost
 import com.moyue.reader.ui.theme.MoYueTheme
 
@@ -20,12 +22,18 @@ import com.moyue.reader.ui.theme.MoYueTheme
  */
 class MainActivity : ComponentActivity() {
 
+    private val container
+        get() = (application as MoYueApplication).container
+
     private val diagnostics
-        get() = (application as MoYueApplication).container.diagnostics
+        get() = container.diagnostics
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         logLaunch(savedInstanceState != null)
+        // 冷启动的“用其他应用打开”。savedInstanceState 非空说明是旋转/分屏或进程恢复后的
+        // 意图重投递：此时导入早已入队或完成，再处理一次会重复导入，必须跳过。
+        if (savedInstanceState == null) enqueueExternalOpen(intent)
         // Android 15（targetSdk 35）强制 edge-to-edge，显式启用并由各页面处理 insets。
         enableEdgeToEdge()
         setContent {
@@ -38,6 +46,29 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * `launchMode=singleTop`：应用已在运行时（书架/设置/阅读器）再收到“用其他应用打开”，
+     * 系统复用本 Activity 并回调此方法。没有它，新 Intent 会被静默丢弃。
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // 同步给 getIntent()，便于后续排查；不影响已入队的请求。
+        setIntent(intent)
+        enqueueExternalOpen(intent)
+    }
+
+    /**
+     * 把 ACTION_VIEW Intent 交给根级队列。
+     *
+     * 这里只做“是否像一本书”的判定（action/scheme），不读取文件：
+     * 读取必须发生在 ViewModel 的 IO 上下文，且 `content://` 的临时读权限
+     * 需要在回到 UI 线程之前尽快用掉。
+     */
+    private fun enqueueExternalOpen(intent: Intent?) {
+        val request = ExternalOpenIntentReader.read(intent) ?: return
+        container.externalOpenQueue.submit(request)
     }
 
     /**
@@ -89,7 +120,7 @@ class MainActivity : ComponentActivity() {
         )
         diagnostics.flush()
         if (!isChangingConfigurations) {
-            (application as MoYueApplication).container.hiddenShelfSession.lock()
+            container.hiddenShelfSession.lock()
             diagnostics.log("hidden.lock")
             diagnostics.flush()
         }

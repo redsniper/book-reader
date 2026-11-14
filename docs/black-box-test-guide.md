@@ -498,6 +498,40 @@ adb shell run-as com.moyue.reader.debug cat shared_prefs/hidden_shelf_security.x
   3 章 / 81 字；打开后分页 3 页，正文可读，下载与诊断日志均无“Encrypted”错误。
   正文加密对照此前已验证仍提示“文件已加密，暂不支持”。**真机可用同一夹具再复测一次。**
 
+### BB-24 外部“用其他应用打开”（M21 回归）
+
+**前置数据**
+- 系统文件管理器（或任意文件浏览应用）中的一本 TXT、一本 EPUB、一本 PDF（可用 §1.3 的夹具）。
+- 首次执行时书架应为空，便于确认新书确实由外部入口导入。
+
+**步骤**
+1. 打开系统文件管理器，进入“下载”目录，长按 `第一章测试.txt`，选择“用其他应用打开 / 打开方式”。
+2. 确认候选列表出现 **墨阅**；选择墨阅（如出现“仅此一次 / 始终”，选“仅此一次”）。
+3. 等待导入完成，观察是否自动进入阅读器；返回书架确认出现该书。
+4. 再次用同样方式打开同一个 TXT，确认提示“该文件已在书架中”，且没有新增书籍、没有显示书名。
+5. 在阅读器界面（不同书籍）直接用外部方式打开 `测试书.epub`，确认自动切换到新书；返回应回到书架。
+6. 在设置页停留时外部打开 `文本版.pdf`，确认导入后直接进入阅读器。
+7. 尝试对一张图片点“用其他应用打开”，确认候选列表**没有**墨阅（避免无关文件劫持）。
+8. （可选）旋转屏幕或分屏后再执行一次第 1、2 步，确认只导入一次。
+
+**预期**
+- 第 2 步候选列表包含“墨阅”；选择后导入成功并**自动进入阅读器**，无需再点书架。
+- 第 4 步只弹“无法打开文件 / 该文件已在书架中”对话框，书架数量不变；提示中**不出现书名**（保护隐藏书架）。
+- 第 5、6 步无论当前在阅读器还是设置页，都能导入并切换/进入新书；返回路径正常，无重复 Activity。
+- 第 7 步图片、视频、APK 等不出现墨阅候选。
+- 第 8 步旋转/分屏不会重复导入（`savedInstanceState` 非空时跳过 Intent 重投递）。
+- 诊断日志出现 `external.open`（scheme/mime）与 `external.done`（result=opened/duplicate/failed），不含文件名、路径或书名。
+- 结果（2026-11-14，`moyue_api35`，Android 15，1344×2992 @480dpi，Debug `1.4.0-debug`）：
+  `cmd package query-activities` 对 `text/plain` / `application/epub+zip` / `application/pdf` /
+  `application/octet-stream` 均返回 `com.moyue.reader.MainActivity`，`image/jpeg` 等不返回；
+  从“打开方式”chooser 中选中墨阅可完成导入（冷启动与热启动均）。热启动（`onNewIntent`）场景下
+  日志确认导入后自动进入新书（`reader.open` 为新书 id），重复文件弹通用提示且书架数量不变。
+  说明：`adb shell am start` 传入 `content://` 时系统拒绝为 shell UID 授予 URI 权限
+  （`UriGrantsManagerService` 安全限制），因此端到端自动化改用应用私有目录的 `file://` URI
+  验证导入/导航；`content://` 选择器路径由 Robolectric 清单查询与 SAF 同源代码覆盖。
+  模拟器期间出现过一次 SurfaceFlinger 帧不刷新（仓库已知的模拟器异常），表现为导航后画面停在旧书，
+  但日志显示新 Reader 已创建；**以真机复核为准**。
+
 ---
 
 ## 3. 通过标准

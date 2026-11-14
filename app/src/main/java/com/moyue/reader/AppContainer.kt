@@ -5,6 +5,7 @@ import java.io.File
 import com.moyue.reader.core.DefaultDispatcherProvider
 import com.moyue.reader.core.DiagnosticLogger
 import com.moyue.reader.core.DispatcherProvider
+import com.moyue.reader.core.ExternalOpenQueue
 import com.moyue.reader.core.SystemClock
 import com.moyue.reader.core.Clock
 import com.moyue.reader.data.cache.FilePageIndexCache
@@ -52,6 +53,14 @@ class AppContainer(application: Application) {
 
     /** 应用级协程作用域：退出阅读器后仍能完成进度落库。 */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * 外部“用其他应用打开”请求的进程内队列。
+     *
+     * Activity 在 onCreate/onNewIntent 写入，根级 ExternalOpenViewModel 串行消费；
+     * 只存在内存，不参与持久化（进程被杀即丢弃）。
+     */
+    val externalOpenQueue: ExternalOpenQueue = ExternalOpenQueue()
 
     /**
      * 真机诊断日志。

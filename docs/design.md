@@ -6,8 +6,8 @@
 | 包名 | `com.moyue.reader` |
 | 目标设备 | Xiaomi 15 Ultra，Xiaomi HyperOS 3.0.314.0 及以上 |
 | 技术栈 | Kotlin + Jetpack Compose + Room + DataStore（纯离线，无网络权限） |
-| 文档版本 | v1.0 |
-| 状态 | 已评审，可进入实现 |
+| 文档版本 | v1.1 |
+| 状态 | 已评审；v1.1 增补“外部打开”入口 |
 
 ---
 
@@ -41,6 +41,7 @@
 | D-02 | "上下翻页"含义 | **上下连续滚动**（整页纵向连续排列），与左右分页共用同一分页模型 | 垂直模式使用 LazyColumn 连续滚动 |
 | D-03 | 导入文件处理 | **复制到应用私有目录**，源文件移动/删除不影响阅读 | 删除书籍时同时删除副本 |
 | D-04 | 忘记隐藏书架密码 | **允许清空隐藏书架数据并重设密码**，需要二次确认；不能找回原密码 | 设置页提供"清空隐藏书架并重置密码" |
+| D-05 | 是否支持从其他应用“用其他应用打开” | **支持**：注册 TXT/EPUB/PDF 的 `ACTION_VIEW`；导入后自动进入阅读器；重复文件只给通用提示，不显示书名、不自动打开（避免泄露隐藏书籍） | 新增外部入口、Intent 处理、错误文案与黑盒用例 |
 
 ---
 
@@ -49,6 +50,7 @@
 ### 3.1 v1 范围内
 
 - 本地导入、复制、删除 TXT / EPUB / PDF 书籍。
+- 从系统/其他应用的“用其他应用打开”直接导入 TXT / EPUB / PDF 并进入阅读器（`ACTION_VIEW`）。
 - 书架网格、书籍名、阅读进度（百分比 + 章节名）、最近阅读排序。
 - 隐藏书架：下拉解锁、设置/修改密码、隐藏/取消隐藏、删除、清空重置。
 - 阅读：分页/连续滚动、目录、跳章、全页跳页、自动记录进度、恢复进度。
@@ -85,6 +87,7 @@
 | R-READ-08 | 自动记录进度 | §11.6 | `ProgressCalculatorTest`、`ProgressRoundTripTest` | BB-06 |
 | R-SHELF-01 | 显示所有书籍 / 书名 / 进度 | §13.1 | `BookDaoTest`、`ShelfViewModelTest` | BB-04 |
 | R-SHELF-02 | 添加 / 删除书籍 | §10、§13.2 | `BookImportServiceTest`、`ShelfViewModelTest` | BB-01/05 |
+| R-SHELF-03 | 从“用其他应用打开”导入并进入阅读器 | §10.8、§13.6 | `ExternalOpenIntentTest`、`ExternalOpenViewModelTest`、清单过滤器测试 | BB-24 |
 | R-HIDE-01 | 书架顶部下拉达到屏高 1/2（松手）弹出密码框；阈值前仅阻尼跟手、无任何提示 | §13.3 | `PullDownUnlockDetectorTest` | BB-12 |
 | R-HIDE-02 | 编辑书籍可隐藏/取消隐藏 | §13.2 | `ShelfViewModelTest`、`BookDaoTest` | BB-13 |
 | R-HIDE-03 | 设置页设置密码 | §13.4 | `PasswordHasherTest`、`HiddenShelfManagerTest` | BB-14 |
@@ -129,6 +132,22 @@ flowchart TD
     J -->|返回| G
     J -->|Home / 锁屏 / 最近任务| K[隐藏会话锁定]
     K --> L[锁定提示页：返回书架重新输入密码]
+```
+
+### 5.3 外部“用其他应用打开”
+
+```mermaid
+flowchart TD
+    A[文件管理器/聊天应用中点击文件] --> B[系统弹出“用其他应用打开”]
+    B --> C[墨阅在列：MAIN Activity 收到 ACTION_VIEW]
+    C --> D{action=VIEW 且 scheme=content/file}
+    D -- 否 --> E[忽略，正常启动书架]
+    D -- 是 --> F[写入进程内待处理队列（不落盘）]
+    F --> G[根级 ViewModel 串行消费：读取文件名/大小/MIME]
+    G --> H[复用 BookImportService：校验 → 复制 → SHA-256 → 解析 → 落库]
+    H -- 成功 --> I[自动进入阅读器]
+    H -- 重复 --> J[对话框“该文件已在书架中”，不显示书名，不打开]
+    H -- 失败 --> K[对话框展示既有导入错误文案]
 ```
 
 ---
@@ -217,6 +236,7 @@ com.moyue.reader
 ├── core/
 │   ├── AppContainer.kt          // 手写依赖注入容器（无 Hilt）
 │   ├── DispatcherProvider.kt    // 可替换调度器，测试注入 Unconfined
+│   ├── ExternalOpenQueue.kt     // 外部 ACTION_VIEW 请求的进程内队列（纯 Kotlin）
 │   ├── Result.kt                // 领域结果类型 BookResult
 │   └── Time.kt                  // Clock 抽象
 ├── domain/
@@ -249,6 +269,8 @@ com.moyue.reader
     ├── theme/                   // 设计系统、ReaderTheme 颜色映射
     ├── navigation/              // 路由
     ├── components/              // 通用组件：封面、进度条、空状态、对话框
+    ├── common/                  // UiMessage、DocumentResolver（SAF/外部 Uri 适配）
+    ├── external/                // ACTION_VIEW 读取、根级 ExternalOpenViewModel 与导入提示浮层
     ├── shelf/                   // ShelfScreen + ShelfViewModel（普通/隐藏共用）
     ├── hidden/                  // 密码解锁对话框、密码设置组件
     ├── reader/                  // ReaderScreen + ReaderViewModel、翻页、目录、跳页、设置面板
@@ -593,6 +615,55 @@ sealed class BookParseException(message: String) : Exception(message) {
 
 导入服务负责生成 UUID、累计字符偏移、初始进度，并将 `ParsedBook` 落库。
 
+### 10.8 外部打开（ACTION_VIEW）入口
+
+**目标**：文件管理器 / 聊天应用点“用其他应用打开”时墨阅出现在候选列表，选中后直接导入并阅读，
+不要求用户先打开应用再走 SAF 选择器。
+
+**清单声明**（`MainActivity`，`exported=true`，`launchMode=singleTop`）：
+
+| action | category | scheme | MIME |
+| --- | --- | --- | --- |
+| `android.intent.action.VIEW` | `DEFAULT` | `content`、`file` | `text/plain`、`application/epub+zip`、`application/pdf`、`application/octet-stream` |
+
+- 系统 chooser 完全由清单过滤器的静态匹配决定：**发送方的 MIME 不在上表且不是 `octet-stream` 时，
+  墨阅不会出现在候选列表**，应用无法在运行时补救。因此把“未知类型”也纳入声明，代价是极少数无扩展名
+  文件会多出一个候选；导入时会以既有“不支持的格式/文件损坏”文案拒绝。
+- 不声明 `*/*`，避免图片、视频、安装包等无关文件都出现墨阅。
+
+**接收与去重投递**：
+
+- `onCreate(savedInstanceState == null)` 处理冷启动意图；`savedInstanceState != null` 说明是配置变更/
+  进程恢复后的重投递，**跳过**，否则旋转一次就重复导入一次。
+- `onNewIntent` 处理 `singleTop` 复用的热启动意图（此时可能正停留在书架、设置或阅读器）。
+- 只接受 `ACTION_VIEW` 且 `data.scheme ∈ {content, file}`；`MAIN` 启动、`http(s)` 链接、`ACTION_SEND`
+  一律忽略（本版不做分享入口）。
+
+**进程内队列**：`ExternalOpenQueue` 是应用级 `Channel`（`AppContainer` 持有），只存在内存，
+不写 DataStore/Room/SavedState；进程被杀后未处理完的请求自然丢弃（文件仍可再次打开）。
+
+**处理流程**（根级 `ExternalOpenViewModel`，生命周期长于任何单个页面）：
+
+1. 串行消费队列（同一时刻只导入一本，避免大文件并发占用内存）；
+2. `AndroidDocumentResolver` 读取显示名/大小/MIME；`content://` 的读权限通常随 Intent 一次性授予，
+   必须立即读取——导入服务本来就会把内容复制进私有目录（D-03），因此不需要持久化 URI 权限；
+3. `BookImportService.import()` 复用全部校验、去重、解析、清理逻辑；
+4. 结果映射：
+
+| 结果 | 行为 |
+| --- | --- |
+| `Imported` | 自动 `navigate(reader/{bookId})`，进入刚导入的书 |
+| `Duplicate` | 对话框“该文件已在书架中”；**不显示书名、不自动打开**（书名可能属于隐藏书籍） |
+| `Failed` | 对话框展示既有导入错误文案（不支持/过大/加密/损坏/无可读文字/读取失败） |
+
+**与隐藏书架的关系**：外部导入的书 `hidden=false`，只会进入普通书架；即便当前正处于隐藏书架会话，
+新书也不会出现在隐藏列表，也不影响解锁状态。若用户此时在隐藏书架，导航返回后仍停留在隐藏书架
+（会话内），需要退出后才能看到新书——这是界面隐藏语义的必然结果，写入黑盒指南备注。
+
+**诊断日志**：新增 `external.open`（只含 `scheme`、`mime`）与 `external.done`
+（`result` 取 `opened`/`duplicate`/`failed`/`unsupported`，另含 `size`）两个事件；
+不记录路径、文件名或书名。
+
 ---
 
 ## 11. 排版与分页引擎
@@ -867,6 +938,15 @@ sealed interface ReaderUiState {
 - 密码尝试节流与常量时间比较降低暴力破解风险。
 - 隐藏书籍仅在 `hidden=true` 查询中出现；普通书架的 DAO 查询强制 `hidden=0`。
 
+### 13.6 外部打开与书架的交互
+
+- 外部打开的书籍与其他导入方式完全同源：同一张 `books` 表、同一私有目录布局、同一进度模型。
+- 导入成功后书架由 Room `Flow` 自动刷新，无需手工通知；同时自动进入阅读器。
+- 重复判定仍是全书 SHA-256（含隐藏书籍）。命中隐藏书籍时只提示“该文件已在书架中”，
+  不返回书名、不打开，避免在普通书架语境下泄露隐藏内容。
+- 若外部导入时用户正在隐藏书架：新书进普通书架，返回后隐藏书架仍显示其原有书籍；退出隐藏书架即可看到新书。
+- 删除、编辑、隐藏、进度等后续行为与 SAF 导入的书无差别。
+
 ---
 
 ## 14. UI/UX 设计
@@ -918,6 +998,8 @@ stateDiagram-v2
     Reader --> Shelf: 返回（普通书）
     Reader --> HiddenShelf: 返回（隐藏书，会话内）
     Settings --> Shelf: 返回
+    External: 其他应用 ACTION_VIEW
+    External --> Reader: 导入成功后自动打开
 ```
 
 导航采用 `NavHost`，隐藏模式是 `ShelfViewModel` 的 UI 状态，不单独持久化路由，防止进程重启后绕过密码直达隐藏书架。
@@ -947,6 +1029,12 @@ stateDiagram-v2
 | 空内容书籍 | 导入失败，提示未找到可读文字 |
 | 超长单章 | 分页仍可工作；章节数上限 5000，避免 UI 卡死 |
 | 旋转/分屏尺寸变化 | 重新分页并恢复锚点 |
+| 外部打开：格式不支持 | 对话框“不支持的格式”，不新增书籍、不残留临时文件 |
+| 外部打开：文件过大/加密/损坏/无可读文字 | 复用既有导入错误文案，清理暂存目录 |
+| 外部打开：重复（含隐藏书籍） | 通用提示“该文件已在书架中”，不显示书名、不自动打开 |
+| 外部打开：读取 content:// 失败 | 提示“读取文件失败”，清理临时文件 |
+| 外部打开：发送方 MIME 未在清单声明 | 系统不列出墨阅（Android 静态匹配规则，无应用内反馈） |
+| 外部打开：同一 Intent 因旋转重投递 | 以 `savedInstanceState` 区分，跳过重复处理 |
 | 返回键 | 保存进度并退出阅读器；不弹出多余确认 |
 
 ---
@@ -993,8 +1081,8 @@ stateDiagram-v2
 | 层级 | 工具 | 覆盖内容 |
 | --- | --- | --- |
 | 单元测试（JVM） | JUnit4 + coroutines-test | 编码探测、文本规范化、分章规则、进度计算、页索引、密码哈希、下拉检测、失败节流、设置校验、主题映射、EPUB HTML 清洗、格式识别、诊断日志滚动/节流 |
-| 单元测试（Android 依赖） | Robolectric | StaticLayout 分页器、Room DAO、DataStore、PDFBox 文本提取、导入服务、隐藏书架流程 |
-| 集成测试 | Robolectric + 真实 Room/文件/解析器 | TXT/EPUB/PDF 导入 → 书架 → 打开 → 分页 → 进度保存/恢复 → 隐藏/解锁 → 删除；扫描 PDF 降级 |
+| 单元测试（Android 依赖） | Robolectric | StaticLayout 分页器、Room DAO、DataStore、PDFBox 文本提取、导入服务、隐藏书架流程、外部打开 Intent 与清单过滤器 |
+| 集成测试 | Robolectric + 真实 Room/文件/解析器 | TXT/EPUB/PDF 导入 → 书架 → 打开 → 分页 → 进度保存/恢复 → 隐藏/解锁 → 删除；扫描 PDF 降级；外部打开 → 自动进入阅读器 |
 | UI 仪器测试 | Compose UI Test（需模拟器） | 书架渲染、密码对话、阅读器设置面板、翻页手势；作为可选验证 |
 | 黑盒验收 | 用户 + 模拟器 | 见 `docs/black-box-test-guide.md` |
 

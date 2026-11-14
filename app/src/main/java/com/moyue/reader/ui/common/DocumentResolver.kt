@@ -1,4 +1,4 @@
-package com.moyue.reader.ui.shelf
+package com.moyue.reader.ui.common
 
 import android.content.Context
 import android.net.Uri

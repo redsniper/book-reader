@@ -15,10 +15,11 @@ import com.moyue.reader.domain.repository.ShelfRepository
 import com.moyue.reader.domain.service.BookImportService
 import com.moyue.reader.domain.service.HiddenShelfManager
 import com.moyue.reader.domain.service.HiddenShelfSession
-import com.moyue.reader.domain.service.ImportError
 import com.moyue.reader.domain.service.ImportResult
 import com.moyue.reader.domain.service.UnlockThrottle
+import com.moyue.reader.ui.common.DocumentResolver
 import com.moyue.reader.ui.common.UiMessage
+import com.moyue.reader.ui.common.toImportUiMessage
 import kotlin.math.ceil
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -165,7 +166,7 @@ class ShelfViewModel(
 
                     is ImportResult.Failed -> {
                         failed++
-                        firstFailure = firstFailure ?: result.error.toUiMessage()
+                        firstFailure = firstFailure ?: result.error.toImportUiMessage()
                     }
                 }
             }
@@ -182,20 +183,6 @@ class ShelfViewModel(
                 it.copy(importProgress = null, message = message)
             }
         }
-    }
-
-    private fun ImportError.toUiMessage(): UiMessage = when (this) {
-        ImportError.UnsupportedFormat -> UiMessage(R.string.import_error_unsupported)
-        is ImportError.FileTooLarge -> UiMessage(
-            R.string.import_error_too_large,
-            listOf((limitBytes / (1024 * 1024)).toInt()),
-        )
-
-        ImportError.Encrypted -> UiMessage(R.string.import_error_encrypted)
-        ImportError.Corrupted -> UiMessage(R.string.import_error_corrupted)
-        ImportError.NoReadableText -> UiMessage(R.string.import_error_no_text)
-        ImportError.Io -> UiMessage(R.string.import_error_io)
-        ImportError.Unknown -> UiMessage(R.string.import_error_unknown)
     }
 
     // ---------------------------------------------------------------------
