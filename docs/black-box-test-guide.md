@@ -97,6 +97,7 @@ install_app
 | `第一章测试.txt`（7 KB，2 章） | BB-01 步骤中引用的文件名 |
 | `测试书.epub`（39 KB，6 章 + 封面） | BB-02 目录与封面；BB-07 跳章 |
 | `无封面测试书.epub`（9 KB） | BB-02 无封面时生成“纸书”封面 |
+| `加密清单无效.epub`（约 3 KB，EPUB2） | BB-23 陈旧 encryption.xml（目标不存在）与 NCX DOCTYPE 兼容 |
 | `文本版.pdf`（12 页，可选中文字） | BB-03 文本 PDF 重排；目录来自提取文字 |
 | `扫描版.pdf`（5 页，纯图像，无文字层） | BB-03 扫描版降级，页数 = PDF 页数 |
 | `长夜行 百万字.txt`（3.0 MB，约 102 万字） | BB-20 长书排版与翻页性能；BB-21 分页缓存 |
@@ -114,8 +115,8 @@ install_app
 push_fixtures
 ```
 
-BB-23 使用的 `issue.epub` 是用户提供的版权样本，不纳入仓库与夹具；测试时单独执行
-`adb push issue.epub /sdcard/Download/`。
+BB-23 使用生成器产出的 `加密清单无效.epub`（`.toolchain/blackbox-fixtures/data/`），
+由 `push_fixtures` 自动推送；不再依赖用户提供的版权样本。
 
 ### 1.4 测试数据准备建议
 
@@ -478,24 +479,24 @@ adb shell run-as com.moyue.reader.debug cat shared_prefs/hidden_shelf_security.x
 ### BB-23 EPUB 加密清单兼容（M20 回归）
 
 **前置数据**
-- 用户提供的 `issue.epub`（12.2 MB，多看生成的 EPUB2）：带 `META-INF/encryption.xml`，
-  但清单只声明加密不存在的 `encrypted_data.xml`，正文 XHTML 均为明文；源文件不纳入仓库。
+- `加密清单无效.epub`（约 3 KB，EPUB2）：`META-INF/encryption.xml` 声明加密不存在的
+  `encrypted_data.xml`，正文 XHTML 均为明文；`toc.ncx` 带标准 DTD DOCTYPE。
+  由 `.toolchain/blackbox-fixtures/generate.py` 生成，`push_fixtures` 会自动推送。
 - 可选：一本正文真正被加密/DRM 保护的 EPUB 作为对照。
 
 **步骤**
-1. 通过系统文件选择器导入 `issue.epub`，观察导入提示与书架。
-2. 打开书籍，检查封面、书名/作者、目录、章节数与正文。
+1. 通过系统文件选择器导入 `加密清单无效.epub`，观察导入提示与书架。
+2. 打开书籍，检查书名/作者、目录、章节数与正文。
 3. 翻到中段并返回书架，再重新打开，确认进度恢复。
 4. （可选）导入正文加密的 EPUB，确认仍被拒绝。
 
 **预期**
-- `issue.epub` 导入成功，不再出现“文件已加密，暂不支持”；书架显示正确书名/作者/封面。
+- `加密清单无效.epub` 导入成功，不再出现“文件已加密，暂不支持”；书架显示文件名“加密清单无效”、作者“墨阅测试组”（书名默认取文件名）。
 - 目录可打开，章节顺序和数量正确；正文可读，翻页/进度保存正常。
 - 正文加密的对照书仍提示“文件已加密，暂不支持”，不产生书籍条目或残留临时文件。
-- 结果：通过（2026-11-14，`moyue_api35`，Android 15，1344×2992 @480dpi）。`issue.epub`
-  导入耗时 16.2 s，970 章 / 2,285,273 字，书架显示 EPUB 与作者“咸鱼老白”；打开后 8152 页，
-  正文可读、无“文件已加密”提示。另构造正文加密对照书，导入仍提示“文件已加密，暂不支持”，
-  诊断日志 `result="failed" error="Encrypted"`，书架未新增。**Xiaomi 15 Ultra 真机可再复测一次。**
+- 结果：通过（2026-11-14，`moyue_api35`，Android 15，1344×2992 @480dpi）。生成夹具导入成功，
+  3 章 / 81 字；打开后分页 3 页，正文可读，下载与诊断日志均无“Encrypted”错误。
+  正文加密对照此前已验证仍提示“文件已加密，暂不支持”。**真机可用同一夹具再复测一次。**
 
 ---
 

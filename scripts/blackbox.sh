@@ -93,6 +93,7 @@ push_fixtures() {
     adb push "$FIXTURES/第一章测试.txt" /sdcard/Download/ || return 1
     adb push "$FIXTURES/测试书.epub" /sdcard/Download/ || return 1
     adb push "$FIXTURES/无封面测试书.epub" /sdcard/Download/ || return 1
+    adb push "$FIXTURES/加密清单无效.epub" /sdcard/Download/ || return 1
     adb push "$FIXTURES/文本版.pdf" /sdcard/Download/ || return 1
     adb push "$FIXTURES/扫描版.pdf" /sdcard/Download/ || return 1
     adb push "$FIXTURES/长夜行 百万字.txt" /sdcard/Download/ || return 1

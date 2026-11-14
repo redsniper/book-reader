@@ -379,7 +379,7 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
 
 ## M20 · EPUB 加密误判与 NCX DOCTYPE 兼容修复（P0，已完成）
 
-用户反馈（2026-11-14）：`issue.epub`（12.2 MB，多看生成的 EPUB2）导入提示“文件已加密，暂不支持”，
+用户反馈（2026-11-14）：一本多看生成的 EPUB2（约 12.2 MB，诊断样本已按用户要求删除）导入提示“文件已加密，暂不支持”，
 其他阅读器可正常打开；诊断日志为 `import.done format="EPUB" result="failed" error="Encrypted"`。
 
 **根因**
@@ -390,24 +390,28 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
 
 | # | 任务 | 验收标准 | 状态 |
 | --- | --- | --- | --- |
-| M20-1 | 加密清单改为按 `CipherReference@URI` 判定：目标不存在或仅字体/图片/CSS 时忽略；命中 spine 正文、OPF、container 或 URI 为空时拒绝；同时兼容容器根/OPF 相对路径 | 字体混淆与陈旧清单可导入；正文加密仍报 Encrypted；真实 `issue.epub` 可解析出章节 | [x] |
+| M20-1 | 加密清单改为按 `CipherReference@URI` 判定：目标不存在或仅字体/图片/CSS 时忽略；命中 spine 正文、OPF、container 或 URI 为空时拒绝；同时兼容容器根/OPF 相对路径 | 字体混淆与陈旧清单可导入；正文加密仍报 Encrypted；生成夹具可解析出章节 | [x] |
 | M20-2 | NCX 解析允许 DOCTYPE；所有 XML 继续关闭外部实体与外部 DTD，并设置实体膨胀上限、空实体解析器 | 带 DTD 声明的 EPUB2 NCX 可解析；外部实体与外部 DTD 开关全部保持关闭 | [x] |
 | M20-3 | 补单元测试：陈旧加密清单、字体混淆、正文加密、带 DOCTYPE 的 NCX | 148 项测试通过、0 失败；测试源码保持本地不纳入 Git | [x] |
-| M20-4 | 同步设计、README、AGENTS、黑盒指南与计划；跑 Lint/APK，并在设备上导入真实样本 | Lint 0 Error；assembleDebug 成功；设备导入成功并可打开阅读 | [x] |
+| M20-4 | 同步设计、README、AGENTS、黑盒指南与计划；跑 Lint/APK，并在设备上导入真实样本与生成夹具 | Lint 0 Error；assembleDebug 成功；设备导入成功并可打开阅读 | [x] |
 
 **验收结果（2026-11-14）**：
-- 真实样本 `issue.epub` 在本机 JVM 解析通过：970 章、2,285,273 字、封面 364,586 字节，
-  书名《开局合欢宗，被师姐拿捏命脉》、作者“咸鱼老白”正确；源 ZIP 内 971 条 spine、
+- 诊断阶段的真实样本（已删除）在本机 JVM 解析通过：970 章、2,285,273 字、封面 364,586 字节，
+  书名与作者元数据识别正确；源 ZIP 内 971 条 spine、
   986 个条目，均未超过现有安全上限。
 - 自动化验证：`./gradlew testDebugUnitTest` **148 项通过、0 失败**（新增 3 项 EPUB 加密兼容测试，
   并把 EPUB2 NCX 夹具改为带标准 DTD DOCTYPE）。
 - 静态检查：`./gradlew lintDebug` **0 Error / 57 Warning**；`./gradlew assembleDebug` 成功，
   Debug APK 约 26 MB（`app/build/outputs/apk/debug/app-debug.apk`，版本仍为 `1.3.0`）。
 - 设备验证（`moyue_api35`，Android 15，1344×2992 / 480dpi，2026-11-14）：
-  `adb install -r` 后经系统文件选择器导入 `issue.epub` 成功（16.2 s、970 章、2,285,273 字），
-  书架显示 EPUB/作者“咸鱼老白”；打开后完成分页（8152 页，模拟器 86 s），正文可读，无“文件已加密”提示。
+  `adb install -r` 后经系统文件选择器导入真实样本（已删除）成功（16.2 s、970 章、2,285,273 字），
+  书架显示 EPUB 与作者信息；打开后完成分页（8152 页，模拟器 86 s），正文可读，无“文件已加密”提示。
   另构造一本 `encryption.xml` 指向 spine 正文的 EPUB，导入仍提示“文件已加密，暂不支持”，
   诊断日志为 `result="failed" error="Encrypted"`，书架未新增条目。
+- 回归夹具：`加密清单无效.epub`（约 3 KB，EPUB2；陈旧 encryption.xml + 带 DTD DOCTYPE 的 NCX）
+  已由生成器产出并加入 `push_fixtures`。`moyue_api35` 实测导入成功（3 章 / 81 字 / 3 页），
+  无“文件已加密”提示；正文加密对照仍被拒绝。用户提供的真实样本与诊断日志已按用户要求删除，
+  BB-23 与后续回归不再依赖该样本。
 - 已知限制：仍不支持正文加密/DRM 的 EPUB；本修复只放行不影响正文抽取的字体混淆、陈旧清单与
   非正文资源加密。
 
@@ -434,7 +438,7 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
 - 版本升级（2026-11-10，第二次）：`versionCode 2 → 3`、`versionName 1.1.0 → 1.2.0`（下拉阈值与提示时机按用户要求变更，按次版本号升级）；本轮重新打包 Debug APK，145 项测试与 Lint 结果不变。更早的 `1.0.0 → 1.1.0` 为下拉动画特性升级。
 - 版本升级（2026-11-14，第三次）：`versionCode 3 → 4`、`versionName 1.2.0 → 1.3.0`（下拉阈值由 2/3 屏改为 1/2 屏，用户可见行为变更，按次版本号升级）；重新打包 Debug APK，145 项测试与 Lint 结果不变。
 - 静态检查：`./gradlew lintDebug` **0 Error / 57 Warning**，报告 `app/build/reports/lint-results-debug.html`。
-- 待用户复测：模拟器已执行 BB-01～BB-22；M20 的 BB-23（真实 `issue.epub` 导入、970 章/8152 页可读、正文加密对照仍拒绝）已在 `moyue_api35` 通过，建议在 Xiaomi 15 Ultra 上用系统选择器再走一遍；M17 的 2/3 屏静默阈值历史验证见上；M19 已将阈值下调为
+- 待用户复测：模拟器已执行 BB-01～BB-22；M20 的 BB-23 已改用生成的 `加密清单无效.epub`（陈旧加密清单 + NCX DOCTYPE）并在 `moyue_api35` 通过（3 章/81 字/3 页），正文加密对照仍拒绝；历史真实样本的模拟器结果（970 章/8152 页）保留在上面的验收记录中，建议在 Xiaomi 15 Ultra 上用生成夹具再走一遍；M17 的 2/3 屏静默阈值历史验证见上；M19 已将阈值下调为
   1/2 屏，并在 `moyue_api35`（实际 1344×2992 / 480dpi，约 1496px）复测：1450px 不触发、1550px 触发，
   按住可见提示、松手弹框。模拟器无触觉硬件，震感与真机手感待复核；半屏行程仍建议从屏幕中部或更上方起手，
   需在 Xiaomi 15 Ultra 上确认单手可达性。
