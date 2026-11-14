@@ -45,7 +45,7 @@ push_fixtures           # 重新推送 1.3 的全部测试数据
 
 冒烟验证（2026-11-08）：TXT、EPUB、文本型 PDF、扫描版 PDF 各导入 1 本均成功
 （书名/作者推断、EPUB 封面、扫描版 1/5 页与“保留原始版式”提示均符合预期），
-随后已 `pm clear` 清空应用数据、恢复空书架。**BB-01～BB-22 需逐项执行；已完成项见各用例“结果”栏。**
+随后已 `pm clear` 清空应用数据、恢复空书架。**BB-01～BB-24 需逐项执行；已完成项见各用例“结果”栏。**
 
 二轮验收（2026-11-08，`moyue_api35`，Debug `1.0.0-debug`）：BB-16、BB-17、BB-18 通过；
 BB-19、BB-20、BB-21 首轮失败，定位到“视口随系统栏 inset 变化”和“分页/渲染字号不同源”
@@ -530,7 +530,9 @@ adb shell run-as com.moyue.reader.debug cat shared_prefs/hidden_shelf_security.x
   （`UriGrantsManagerService` 安全限制），因此端到端自动化改用应用私有目录的 `file://` URI
   验证导入/导航；`content://` 选择器路径由 Robolectric 清单查询与 SAF 同源代码覆盖。
   模拟器期间出现过一次 SurfaceFlinger 帧不刷新（仓库已知的模拟器异常），表现为导航后画面停在旧书，
-  但日志显示新 Reader 已创建；**以真机复核为准**。
+  但日志显示新 Reader 已创建。
+- 真机结果：**通过**（2026-11-14，Xiaomi 15 Ultra / HyperOS，Debug `1.4.0-debug`）。用户按本用例步骤
+  完成真机复测，系统“打开方式”能看到并选择墨阅，导入与阅读流程符合预期；M21 不再有待真机复核项。
 
 ---
 
