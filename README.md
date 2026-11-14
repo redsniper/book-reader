@@ -93,7 +93,7 @@ platform-tools
 
 APK 输出：`app/build/outputs/apk/debug/app-debug.apk`
 
-当前版本：`1.2.0`（versionCode 3；Debug 版本名 `1.2.0-debug`，包名 `com.moyue.reader.debug`）。
+当前版本：`1.3.0`（versionCode 4；Debug 版本名 `1.3.0-debug`，包名 `com.moyue.reader.debug`）。
 
 安装到设备/模拟器：
 

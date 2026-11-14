@@ -1,6 +1,6 @@
 # 墨阅 · 用户黑盒测试指南
 
-> 自动化测试（144 项单元 / Robolectric 集成测试）已全部通过。以下用例需要真实或模拟的 Android 设备完成，因为涉及系统文件选择器、手势、真实 PDF 渲染、沉浸式系统栏与视觉判断，只能由用户执行。
+> 自动化测试（145 项单元 / Robolectric 集成测试）已全部通过。以下用例需要真实或模拟的 Android 设备完成，因为涉及系统文件选择器、手势、真实 PDF 渲染、沉浸式系统栏与视觉判断，只能由用户执行。
 
 ## 1. 测试环境
 
@@ -8,7 +8,7 @@
 | --- | --- |
 | 设备 | Xiaomi 15 Ultra（HyperOS 3.0.314.0 及以上）优先；或 Android 模拟器 API 35+ |
 | 应用 | Debug APK：`app/build/outputs/apk/debug/app-debug.apk` |
-| 应用版本 | `1.2.0`（versionCode 3，Debug 版本名 `1.2.0-debug`；文中 1.0.0/1.1.0-debug 为历史记录） |
+| 应用版本 | `1.3.0`（versionCode 4，Debug 版本名 `1.3.0-debug`；文中 1.0.0/1.1.0/1.2.0-debug 为历史记录） |
 | 包名 | `com.moyue.reader.debug` |
 | 启动 Activity | `com.moyue.reader.debug/com.moyue.reader.MainActivity` |
 | 数据 | TXT、EPUB、文本型 PDF、扫描版 PDF 各准备 1 本；另准备 1 个损坏文件 |
