@@ -144,7 +144,7 @@ import kotlinx.coroutines.launch
  * - 隐藏模式仅展示 hidden=true 的书籍，并提供退出入口。
  *
  * 下拉解锁由 NestedScrollConnection 捕获书架顶部的 overscroll：
- * 阈值是整窗高度的 2/3；阈值前只跟手下移、不显示任何提示，越过阈值才淡入提示，
+ * 阈值是整窗高度的 1/2；阈值前只跟手下移、不显示任何提示，越过阈值才淡入提示，
  * 松手后弹出密码框。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -383,7 +383,7 @@ fun ShelfScreen(
             Modifier
                 .fillMaxSize()
                 // Scaffold 的 contentWindowInsets 为 0，这里的尺寸就是含系统栏的整窗高度；
-                // 阈值按它计算，保证“2/3 个屏幕”与用户手指能走到的距离一致。
+                // 阈值按它计算，保证“半屏”与用户手指能走到的距离一致。
                 .onSizeChanged { windowHeightPx = it.height }
                 .background(
                     Brush.verticalGradient(
