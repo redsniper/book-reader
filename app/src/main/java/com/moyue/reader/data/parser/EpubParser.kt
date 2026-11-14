@@ -11,16 +11,19 @@ import com.moyue.reader.domain.service.TextNormalizer
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.StringReader
 import java.net.URLDecoder
 import java.util.zip.ZipEntry
 import java.util.zip.ZipException
 import java.util.zip.ZipFile
+import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
+import org.xml.sax.InputSource
 import org.w3c.dom.Document as W3cDocument
 import org.w3c.dom.Element as W3cElement
 
@@ -33,8 +36,9 @@ import org.w3c.dom.Element as W3cElement
  * 安全防护：
  * - 不向磁盘解压，避免 Zip Slip；
  * - 限制条目数、单条目大小、总解压大小，避免 Zip Bomb；
- * - XML 解析禁用 DOCTYPE 与外部实体（XXE）；
- * - 加密/DRM 图书直接拒绝。
+ * - XML 解析禁止外部实体与外部 DTD（XXE），并限制内部实体膨胀；
+ *   container/OPF/encryption 额外禁用 DOCTYPE，NCX 为兼容标准 EPUB2 允许 DOCTYPE；
+ * - 只在加密真正覆盖正文时拒绝，字体混淆与陈旧加密清单不阻断导入。
  */
 class EpubParser(
     @Suppress("unused") private val chapterSplitter: ChapterSplitter,
@@ -76,8 +80,22 @@ class EpubParser(
             val opfPath = decodePath(rootFile.getAttribute("full-path"))
             if (opfPath.isBlank()) throw BookParseException.Corrupted("EPUB OPF 路径为空")
 
-            val encryption = readEntry(archive, "META-INF/encryption.xml", MAX_XML_BYTES)
-            if (encryption != null && String(encryption, Charsets.UTF_8).contains("EncryptedData")) {
+            // 加密清单不能只看是否存在 EncryptedData：大量正常 EPUB 用 encryption.xml
+            // 声明字体混淆，甚至留有指向不存在条目的陈旧清单（多看等工具生成的书常见）。
+            // 这里先解析出被加密资源的 URI，等拿到 OPF/spine 后只拦截真正覆盖正文的目标，
+            // 避免把可正常阅读的书误判为 DRM。
+            val encryptionTargets = readEntry(archive, ENCRYPTION_PATH, MAX_XML_BYTES)
+                ?.let(::parseEncryptionTargets)
+                .orEmpty()
+            val opfBaseDir = opfPath.substringBeforeLast('/', "")
+            if (encryptionTargets.isNotEmpty() &&
+                encryptionTargetsOverlap(
+                    archive = archive,
+                    targets = encryptionTargets,
+                    opfBaseDir = opfBaseDir,
+                    watchedPaths = setOf(opfPath, CONTAINER_PATH),
+                )
+            ) {
                 throw BookParseException.Encrypted()
             }
 
@@ -85,7 +103,6 @@ class EpubParser(
             val opfBytes = readEntry(archive, opfPath, MAX_XML_BYTES)
                 ?: throw BookParseException.Corrupted("EPUB 缺少 OPF 文件")
             val opf = parseXml(opfBytes)
-            val opfBaseDir = opfPath.substringBeforeLast('/', "")
 
             val metadataTitles = elementsByLocalName(opf, "title")
                 .map { it.textContent.trim() }
@@ -114,6 +131,24 @@ class EpubParser(
                 .map { it.getAttribute("idref") }
                 .filter { it.isNotBlank() }
             if (spineIds.isEmpty()) throw BookParseException.Corrupted("EPUB spine 为空")
+
+            // 只有 spine 里的正文文档被加密才会影响阅读；字体、图片、CSS 即使被
+            // 加密（或加密清单指向不存在的条目）也无需解密，直接继续抽取正文。
+            val spineContentPaths = spineIds.mapNotNull { manifest[it] }
+                .filter { it.mediaType in TEXT_MEDIA_TYPES }
+                .map { resolvePath(opfBaseDir, it.href) }
+                .filter { it.isNotBlank() }
+                .toSet()
+            if (spineContentPaths.isNotEmpty() &&
+                encryptionTargetsOverlap(
+                    archive = archive,
+                    targets = encryptionTargets,
+                    opfBaseDir = opfBaseDir,
+                    watchedPaths = spineContentPaths,
+                )
+            ) {
+                throw BookParseException.Encrypted()
+            }
 
             // 3. 目录（nav / NCX），键为去掉锚点后的 ZIP 内路径。
             val coverId = elementsByLocalName(opf, "meta")
@@ -222,7 +257,9 @@ class EpubParser(
             val ncxBytes = readEntry(archive, ncxPath, MAX_XML_BYTES)
             if (ncxBytes != null) {
                 val ncxBase = ncxPath.substringBeforeLast('/', "")
-                val ncx = parseXml(ncxBytes)
+                // 标准 EPUB2 的 NCX 常带 W3C DTD 声明；外部 DTD 仍被禁用，
+                // 只放开 DOCTYPE 语法，避免合法的旧书全部解析失败。
+                val ncx = parseXml(ncxBytes, allowDoctype = true)
                 val result = LinkedHashMap<String, String>()
                 elementsByLocalName(ncx, "navPoint").forEach { navPoint ->
                     val labelElement = elementsByLocalName(navPoint, "text").firstOrNull()
@@ -289,6 +326,86 @@ class EpubParser(
     }
 
     // ---------------------------------------------------------------------
+    // 加密清单
+    // ---------------------------------------------------------------------
+
+    /**
+     * 解析 encryption.xml 中被声明的加密目标 URI。
+     *
+     * 只收集 URI、不立即拒绝：OCF 规范要求 CipherReference 相对容器根，但部分生成器
+     * 写成相对 OPF；目标还可能根本不在 ZIP 中（陈旧或伪装的加密清单）。返回空字符串
+     * 表示 EncryptedData 缺少可用 URI，无法判断保护范围，由调用方按加密处理。
+     */
+    private fun parseEncryptionTargets(bytes: ByteArray): List<String> {
+        val document = try {
+            parseXml(bytes)
+        } catch (_: BookParseException.Corrupted) {
+            // 清单本身损坏时无法确认正文是否受影响，保守地继续按加密处理。
+            throw BookParseException.Encrypted("EPUB 加密信息无法解析")
+        }
+        return elementsByLocalName(document, "EncryptedData").map { encryptedData ->
+            elementsByLocalName(encryptedData, "CipherReference").firstOrNull()
+                ?.getAttribute("URI")
+                ?.trim()
+                .orEmpty()
+        }
+    }
+
+    /**
+     * 判断加密目标是否覆盖 [watchedPaths] 中真实存在的资源。
+     *
+     * 只有命中 spine 正文 / OPF / container 才拦截；目标缺失或只涉及字体、图片、CSS 时
+     * 不影响可重排文字抽取，继续导入。空 URI 表示保护范围未知，按加密处理。
+     */
+    private fun encryptionTargetsOverlap(
+        archive: ZipFile,
+        targets: List<String>,
+        opfBaseDir: String,
+        watchedPaths: Set<String>,
+    ): Boolean {
+        if (watchedPaths.isEmpty()) return false
+        return targets.any { uri ->
+            if (uri.isBlank()) return@any true
+            encryptionCandidates(uri, opfBaseDir).any { candidate ->
+                candidate in watchedPaths && archive.getEntry(candidate)?.isDirectory == false
+            }
+        }
+    }
+
+    /**
+     * 生成加密 URI 的候选 ZIP 路径。
+     *
+     * 同时尝试容器根相对与 OPF 相对两种解释；只有真实存在的条目才参与判定，
+     * 因此指向不存在文件的陈旧清单不会误伤整本书。
+     */
+    private fun encryptionCandidates(uri: String, opfBaseDir: String): List<String> {
+        val raw = uri.substringBefore('#').substringBefore('?').trim().replace('\\', '/')
+        if (raw.isBlank()) return emptyList()
+        if (raw.startsWith("http:", true) || raw.startsWith("https:", true) ||
+            raw.startsWith("data:", true) || raw.startsWith("mailto:", true)
+        ) {
+            return emptyList()
+        }
+        val decoded = decodePath(raw)
+        val rootRelative = normalizeContainerPath(decoded)
+        val opfRelative = if (opfBaseDir.isBlank()) rootRelative else resolvePath(opfBaseDir, decoded)
+        return listOf(rootRelative, opfRelative).filter { it.isNotBlank() }.distinct()
+    }
+
+    /** 容器根相对路径归一化：去掉前导斜杠，处理 `.` 与 `..`，防止路径穿越。 */
+    private fun normalizeContainerPath(raw: String): String {
+        val parts = mutableListOf<String>()
+        raw.trimStart('/').split('/').forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
+                else -> parts.add(part)
+            }
+        }
+        return parts.joinToString("/")
+    }
+
+    // ---------------------------------------------------------------------
     // ZIP / XML 工具
     // ---------------------------------------------------------------------
 
@@ -343,14 +460,24 @@ class EpubParser(
         }
     }
 
-    private fun parseXml(bytes: ByteArray): W3cDocument {
+    /**
+     * 安全解析 EPUB 内部 XML。
+     *
+     * @param allowDoctype 仅 NCX 需要：标准 EPUB2 会声明 NCX DTD，严格禁用 DOCTYPE
+     *   会把合法旧书误判为损坏。无论是否允许 DOCTYPE，都必须关闭外部实体/外部 DTD，
+     *   并通过实体解析器拒绝一切外部请求，防止 XXE。
+     */
+    private fun parseXml(bytes: ByteArray, allowDoctype: Boolean = false): W3cDocument {
         return try {
             val factory = DocumentBuilderFactory.newInstance().apply {
                 isNamespaceAware = true
                 isExpandEntityReferences = false
                 // 不同 Android/JVM 实现支持的特性不同，逐个尝试开启安全开关。
-                runCatching {
-                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                runCatching { setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true) }
+                if (!allowDoctype) {
+                    runCatching {
+                        setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                    }
                 }
                 runCatching {
                     setFeature("http://xml.org/sax/features/external-general-entities", false)
@@ -361,8 +488,25 @@ class EpubParser(
                 runCatching {
                     setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
                 }
+                // Android 的 XMLConstants 未暴露 ACCESS_EXTERNAL_* 常量，使用标准属性 URI。
+                runCatching {
+                    setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "")
+                }
+                runCatching {
+                    setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "")
+                }
+                // 部分平台的 SAX 特性支持不完整，这里再限制实体膨胀上限（失败则忽略）。
+                runCatching {
+                    setAttribute(
+                        "http://www.oracle.com/xml/jaxp/properties/entityExpansionLimit",
+                        "10000",
+                    )
+                }
             }
-            factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
+            factory.newDocumentBuilder().apply {
+                // 最后一道防线：即使外部实体开关未生效，也不允许解析器访问网络/文件。
+                setEntityResolver { _, _ -> InputSource(StringReader("")) }
+            }.parse(ByteArrayInputStream(bytes))
         } catch (e: Exception) {
             throw BookParseException.Corrupted("EPUB XML 解析失败", e)
         }
@@ -422,6 +566,7 @@ class EpubParser(
 
     private companion object {
         const val CONTAINER_PATH = "META-INF/container.xml"
+        const val ENCRYPTION_PATH = "META-INF/encryption.xml"
         const val MAX_ENTRY_COUNT = 10_000
         const val MAX_XML_BYTES = 10 * 1024 * 1024
         const val MAX_CONTENT_ENTRY_BYTES = 20 * 1024 * 1024

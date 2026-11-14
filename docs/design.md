@@ -62,7 +62,7 @@
 | --- | --- |
 | 在线书源、云同步、账号系统 | 纯离线产品定位 |
 | 听书 / TTS / 词典 / 批注 / 划线分享 | 非本期核心 |
-| DRM / 加密 EPUB、需密码打开的 PDF | 法务与技术复杂度高，v1 给出友好错误 |
+| 正文加密 / DRM EPUB、需密码打开的 PDF | 法务与技术复杂度高，v1 给出友好错误；仅字体混淆的 EPUB 不属于此列，正常导入 |
 | 固定版式 EPUB、漫画/图集 EPUB | v1 只做文字流阅读；图片策略可替换 |
 | 导入自定义字体文件 | v1 使用系统字体族；`FontFamilyOption` 可扩展 |
 | PDF 缩放、批注、文字选择 | v1 以"适配宽度"显示扫描页 |
@@ -527,11 +527,16 @@ sequenceDiagram
 
 1. 使用 `ZipFile` 打开副本；防御 Zip Slip（只按条目名读取，不解压到磁盘）、Zip Bomb（条目数 ≤ 10000、单条目解压 ≤ 20 MB、总计 ≤ 200 MB）。
 2. `META-INF/container.xml` → OPF 路径；解析 OPF 的 `metadata`（title、creator、language）、`manifest`、`spine`。
-3. 有 `META-INF/encryption.xml` 且包含加密条目 → 报"暂不支持加密/DRM 电子书"。
+3. `META-INF/encryption.xml` 只在**正文确实受加密保护**时拒绝：
+   - 解析 `EncryptedData/CipherReference@URI`，同时按容器根路径与 OPF 相对路径解析；去掉锚点/查询参数并解码百分号转义。
+   - 目标条目在 ZIP 中不存在（陈旧或伪装的加密清单）、目标是字体/图片/CSS 等非正文资源时忽略；字体混淆（IDPF `embedding` / Adobe `pdf:enc#RC`）因此可正常导入。
+   - 目标命中 spine 中的 XHTML/HTML 正文、OPF、container.xml，或 `EncryptedData` 缺少 `CipherReference`/URI 为空（无法判断保护范围）时，报"暂不支持加密/DRM 电子书"。
+   - 该规则避免"只要存在 encryption.xml 就整本拒绝"的误判，同时保持对真正正文 DRM 的拦截；阅读器本就丢弃 EPUB 内嵌字体，跳过字体资源不影响排版。
 4. 目录优先级：
    - EPUB3：manifest 中 `properties="nav"` 的 XHTML（解析 `<nav epub:type="toc">` 的链接）。
    - EPUB2：`spine` 的 `toc` 指向的 NCX（`navMap/navPoint`）。
    - 无目录：按 spine 顺序，每项一章。
+   - 标准 EPUB2 的 NCX 常带 DTD DOCTYPE，解析 NCX 时允许 DOCTYPE，但仍禁用外部 DTD/外部实体并限制实体膨胀；container/OPF/encryption 继续禁用 DOCTYPE。
 5. 链接 href 去掉锚点后与 spine 文档路径匹配，得到章节标题；同一文档的多个锚点合并为一个章节（v1 限制）。
 6. 正文清洗：Jsoup 解析 XHTML，移除 `script/style/nav/head`，把 `p/div/br/h1-h6/li/tr` 等块级边界转为换行，解码实体，压缩空白，输出纯文本。
 7. 封面：manifest 中 `properties="cover-image"`，或 `<meta name="cover" content="id">` 指向的图片；复制为 `cover.img`（按原始字节保存，渲染时按内容解码）。
@@ -930,7 +935,7 @@ stateDiagram-v2
 | 不支持的扩展名/MIME | 拒绝并列出支持格式 |
 | TXT 编码异常 | 尝试 GB18030，仍失败则替换解码并提示"部分字符可能显示异常" |
 | EPUB 损坏/非 ZIP | 解析失败，清理临时文件，提示文件损坏 |
-| EPUB 加密/DRM | 提示暂不支持加密电子书 |
+| EPUB 正文加密/DRM | 提示暂不支持加密电子书；字体混淆、加密清单指向不存在条目或非正文资源时正常导入 |
 | PDF 加密 | 提示需要密码的 PDF 暂不支持 |
 | PDF 扫描件 | 自动降级逐页看图，提示保留原版式 |
 | 分页过程被杀 | 未写完的缓存只有临时文件，启动后按未命中处理；下次打开重排当前排版并用字符锚点恢复，其他已缓存排版仍可命中 |
@@ -1006,7 +1011,7 @@ stateDiagram-v2
 1. 中文标题 `第一章 初见` / `第12回` / `楔子` / `Chapter 3` 均正确切章；标题出现在行中不切。
 2. 无标题 TXT 按 6000 字符回退分节；章节字符偏移首尾相接且总长等于正文长度。
 3. UTF-8 BOM、UTF-16LE、GB18030 三种编码解码一致。
-4. EPUB3 nav 与 EPUB2 NCX 目录解析；加密 EPUB 报错；Zip Slip 路径被拒绝。
+4. EPUB3 nav 与带 DTD DOCTYPE 的 EPUB2 NCX 目录解析；字体混淆、指向不存在条目的加密清单可正常导入，正文加密仍报错；Zip Slip 路径被拒绝。
 5. 文本 PDF 提取并重排；扫描版 PDF（构造空文字层）识别为扫描件并逐页。
 6. 页索引：所有页字符区间无重叠、无遗漏；首页预留标题高度；切换字号后锚点恢复。
 7. 进度：50% 位置保存后重开定位误差 ≤ 1 个字符；扫描 PDF 按页恢复。
