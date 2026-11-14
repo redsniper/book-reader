@@ -28,15 +28,17 @@
 应用完全离线，AOSP 镜像不含 Google Play 服务也不影响任何用例；选择 `default`
 而非 `google_apis` 镜像可减少约 900 MB 下载与磁盘占用。
 
+本机 SDK/JDK/字体路径统一放在仓库根目录 `.env.local`（从 `.env.example` 复制，已 gitignore），
+由 `scripts/dev-env.sh` 加载并导出 `ANDROID_*`/`JAVA_HOME` 等变量；不要在脚本或文档里写死本机路径。
 AVD 放在仓库内 `.android-home/`（已 gitignore），环境脚本通过 `ANDROID_AVD_HOME`
-定位，不会修改你的 `HOME`。命令行操作前先载入本机环境脚本：
+定位，不会修改你的 `HOME`。命令行操作前先载入环境与黑盒辅助函数：
 
 ```bash
-. .toolchain/blackbox-fixtures/env.sh
-start_emulator      # 启动 moyue_api35 并处理日志
-wait_boot           # 等待开机完成
-install_app         # adb install -r app-debug.apk 并启动应用
-push_fixtures       # 重新推送 1.3 的全部测试数据
+. scripts/blackbox.sh   # 自动加载 scripts/dev-env.sh
+start_emulator          # 启动 moyue_api35 并处理日志
+wait_boot               # 等待开机完成
+install_app             # adb install -r app-debug.apk 并启动应用
+push_fixtures           # 重新推送 1.3 的全部测试数据
 ```
 
 > 模拟器窗口关闭后重新执行 `start_emulator` 即可；应用与测试数据保存在 AVD 磁盘中。
@@ -79,7 +81,7 @@ sdkmanager "platform-tools" "emulator" "system-images;android-35;default;x86_64"
 启动与安装：
 
 ```bash
-. .toolchain/blackbox-fixtures/env.sh
+. scripts/blackbox.sh
 start_emulator
 wait_boot
 install_app
@@ -108,7 +110,7 @@ install_app
 重新推送：
 
 ```bash
-. .toolchain/blackbox-fixtures/env.sh
+. scripts/blackbox.sh
 push_fixtures
 ```
 
@@ -121,11 +123,14 @@ push_fixtures
 - **损坏文件**：把任意非文本文件改名为 `bad.txt`（或空文件）。
 
 以上数据已按本节建议生成，生成脚本为 `.toolchain/blackbox-fixtures/generate.py`
-（本机工具，不入库）。如需重新生成并推送：
+（本机工具，不入库）。生成器不再内置字体路径，必须在 `.env.local` 中设置
+`MOYUE_CJK_FONT` 指向本机中文字体文件（.ttf/.ttc），并由 `scripts/dev-env.sh` 导出。
+如需重新生成并推送：
 
 ```bash
+. scripts/dev-env.sh
 .toolchain/venv/bin/python .toolchain/blackbox-fixtures/generate.py
-. .toolchain/blackbox-fixtures/env.sh && push_fixtures
+. scripts/blackbox.sh && push_fixtures
 ```
 
 ---

@@ -19,6 +19,8 @@ app/src/androidTest/
 
 # 本地工具/环境
 .claude/
+# 本机开发环境（从 .env.example 复制，禁止提交）
+.env.local
 
 # 构建日志
 *.log

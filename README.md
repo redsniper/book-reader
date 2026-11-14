@@ -39,14 +39,34 @@
 - Android SDK Platform 35 + Build-Tools 35.0.0
 - Gradle 8.9（由 wrapper 自动下载）
 
-### 配置 SDK
-在项目根目录创建 `local.properties`：
+### 配置本机环境
+所有机器相关路径统一放在仓库根目录的 `.env.local`（已 gitignore），不要写入受跟踪文件。
 
-```properties
-sdk.dir=/path/to/android-sdk
+1. 复制模板并填写：
+
+```bash
+cp .env.example .env.local
 ```
 
-或设置 `ANDROID_HOME`。SDK 目录至少需要：
+至少填写 `JAVA_HOME`（JDK 21 根目录）与 `ANDROID_HOME`（Android SDK 根目录）；路径含空格时保留双引号。黑盒测试数据生成还需要 `MOYUE_CJK_FONT`。
+
+2. 在仓库根目录加载环境（bash/zsh）：
+
+```bash
+. scripts/dev-env.sh
+```
+
+脚本会校验 JDK/SDK，导出 `JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`ANDROID_USER_HOME`、`ANDROID_AVD_HOME`、`GRADLE_USER_HOME`，把 SDK 工具加入 `PATH`，并根据 `ANDROID_HOME` 生成/更新 `local.properties` 的 `sdk.dir`。
+
+3. 新开终端后需要重新 source；随后执行下面的 Gradle 命令。
+
+说明：
+- `local.properties` 由脚本生成，仅本机使用，不要手工提交。
+- Android Studio：在 IDE 中选择 Gradle JDK 21 与 Android SDK，工程会继续使用生成的 `local.properties`。
+- CI 或没有 `.env.local` 的环境：直接设置 `JAVA_HOME`/`ANDROID_HOME` 后 source 本脚本即可。
+- 提交前运行 `scripts/check-no-local-paths.sh`，确认没有本机绝对路径进入 Git。
+
+SDK 目录至少需要：
 ```
 platforms/android-35
 build-tools/35.0.0
@@ -137,6 +157,10 @@ docs/
 ├── design.md
 ├── implementation-plan.md
 └── black-box-test-guide.md
+scripts/
+├── dev-env.sh              # 从 .env.local 加载本机 JDK/SDK 等环境
+├── blackbox.sh             # 黑盒测试模拟器/安装/推送辅助函数
+└── check-no-local-paths.sh # 检查受跟踪文件是否混入本机绝对路径
 ```
 
 ## 隐私与安全

@@ -285,8 +285,10 @@ ui (Compose + MVVM) → domain ← data / platform
 - 依赖版本集中在 `gradle/libs.versions.toml`；升级 Kotlin/AGP/Compose/Room/PDFBox 必须单独验证构建、单元测试与真机行为，并在计划中记录。
 - 新增依赖需说明用途、体积、许可证与离线可行性；禁止引入需要联网或仅云端可用的库。
 - 国内构建优先使用镜像（Gradle wrapper 腾讯镜像、Maven 阿里云镜像）；不得把个人代理地址、绝对 SDK 路径写入受跟踪文件。
-- `.android-home/`（本机 Android 用户目录）、`.toolchain/`、`.gradle-home/`、`.gradle/`、`local.properties`、`app/build/`、构建日志、`.claude/` 均不得提交。
-- `local.properties` 仅本机使用；CI/新环境通过 `ANDROID_HOME` 或 `sdk.dir` 配置。
+- 本机 SDK/JDK/字体/AVD 路径只写在仓库根目录 `.env.local`（从 `.env.example` 复制，已 gitignore）；通过 `. scripts/dev-env.sh` 加载。受跟踪文件不得出现用户主目录、系统字体或 SDK/JDK 的绝对路径。
+- `local.properties` 由 `scripts/dev-env.sh` 根据 `.env.local` 的 `ANDROID_HOME` 生成，仅本机使用；CI/无 `.env.local` 的环境直接设置 `JAVA_HOME`/`ANDROID_HOME`。
+- 提交前运行 `scripts/check-no-local-paths.sh`，必须无输出；不要通过豁免或删除检查来掩盖本机路径。
+- `.android-home/`（本机 Android 用户目录）、`.toolchain/`、`.gradle-home/`、`.gradle/`、`.env.local`、`local.properties`、`app/build/`、构建日志、`.claude/` 均不得提交。
 - Robolectric 的下载缓存位于 `app/build/robolectric-home`，使用国内镜像；不得改回用户主目录（受限环境不可写）。
 - 提交格式：
   ```text

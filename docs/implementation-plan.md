@@ -328,6 +328,27 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
 
 ---
 
+## M18 · 开发环境路径集中管理（P1，已完成）
+
+背景（2026-11-14）：本机 SDK/JDK/字体路径散落在 `local.properties`、`.gradle-home/gradle.properties`、
+`.toolchain/blackbox-fixtures/env.sh` 与夹具生成器中；受跟踪代码本身没有绝对路径，但同一路径多处维护，
+新环境也无法仅按文档复现。目标是把本机路径收敛到 gitignore 的 `.env.local`，由入库脚本加载。
+
+| # | 任务 | 验收标准 | 状态 |
+| --- | --- | --- | --- |
+| M18-1 | 新增 `.env.example`、`scripts/dev-env.sh`；从 `.env.local` 导出 `JAVA_HOME`/`ANDROID_*`/`GRADLE_USER_HOME` 并同步 `local.properties` | bash/zsh source 后变量正确；`local.properties` 的 `sdk.dir` 与 `ANDROID_HOME` 一致；缺少必填项时报错清晰 | [x] |
+| M18-2 | 新增 `scripts/blackbox.sh`、`scripts/check-no-local-paths.sh`；清理 `.gradle-home`、`.toolchain/.../env.sh`、夹具生成器中的本机路径 | 黑盒函数可用；生成器只需 `MOYUE_CJK_FONT`；路径检查无输出 | [x] |
+| M18-3 | README、黑盒指南、AGENTS、计划同步；跑测试/Lint/APK | 文档给出 `.env.local` 首次配置与 CI/Android Studio 说明；自动化验证通过 | [x] |
+
+**验收结果（2026-11-14）**：
+- 本机路径只存在于 `.env.local`（不入库）；`local.properties` 由 `scripts/dev-env.sh` 从 `ANDROID_HOME` 派生。
+- 新增 `scripts/blackbox.sh` 提供 `start_emulator`/`wait_boot`/`install_app`/`push_fixtures`，旧 `.toolchain` 入口保留为兼容 shim。
+- 夹具生成器改为从 `MOYUE_CJK_FONT` 读取字体，不再写死系统字体路径。
+- 验证：`./gradlew testDebugUnitTest --rerun-tasks` 145 项通过、0 失败；`lintDebug` 0 Error / 57 Warning；`assembleDebug` 成功，Debug APK 约 26 MB；`scripts/check-no-local-paths.sh` 0 输出。
+- 本次不涉及 app 代码、数据库、依赖或产品行为，`docs/design.md` 无需更新；自动化测试数量保持 145 项。
+
+---
+
 ## 实施顺序说明
 
 1. **先做 M0–M3**：数据、解析、分页是阅读器的地基；先以单元测试锁定正确性，避免 UI 返工。
@@ -335,9 +356,10 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
 3. **M6 阅读器**：分页引擎稳定后再接 UI，减少调试成本。
 4. **M7–M10**：打磨、测试、验收与文档。
 
-## 当前状态（2026-11-10）
+## 当前状态（2026-11-14）
 
-- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制；M11 的分页缓存与跳页重排优化；M12 的 BB-15 隐藏会话返回路径修复；M13 的 BB-19～BB-21 视口/字号修复；M14 的真机诊断日志与安装包；M15 的字号设置面板塌陷与重开位置漂移修复；M16 的隐藏书架下拉动画与进入转场；M17 的隐藏书架下拉改为 2/3 屏静默阈值。
+- 已完成：M0–M8 全部开发与自动化测试；M9 的 APK、测试、黑盒指南；M10 的 README 与已知限制；M11 的分页缓存与跳页重排优化；M12 的 BB-15 隐藏会话返回路径修复；M13 的 BB-19～BB-21 视口/字号修复；M14 的真机诊断日志与安装包；M15 的字号设置面板塌陷与重开位置漂移修复；M16 的隐藏书架下拉动画与进入转场；M17 的隐藏书架下拉改为 2/3 屏静默阈值；M18 的开发环境路径集中管理。
+- M18 验证（2026-11-14）：`.env.example`、`scripts/dev-env.sh`、`scripts/blackbox.sh`、`scripts/check-no-local-paths.sh` 已加入；本机路径只存在于 gitignore 的 `.env.local`，`local.properties` 的 `sdk.dir` 由 `ANDROID_HOME` 派生；bash/zsh source、旧 `.toolchain` 兼容入口、缺少配置时的报错与黑盒函数均已验证；夹具生成器改用 `MOYUE_CJK_FONT`；路径检查 0 输出。
 - 自动化验证：`./gradlew testDebugUnitTest` **145 项测试通过，0 失败**（含 Room/Robolectric 集成、真实 PDFBox PDF、StaticLayout 分页、页索引文件缓存、三个 ViewModel、隐藏会话后台锁定、首开视口时序、下拉状态机、2/3 屏阈值与橡皮筋位移映射）。
 - 模拟器验证（`moyue_api35`，Android 15）：隐藏书阅读中按 Home 后，经最近任务、桌面图标返回均显示锁定提示；桌面图标不再叠加新 Activity；隐藏书架后台返回显示“隐藏书架已锁定”对话框；旋转保持会话；进程强制停止后重启不直达隐藏内容。
 - M16 模拟器验证（`moyue_api35`，1080×2400 / 420dpi，2026-11-08）：长距离下拉时网格跟手下移、越过阈值开锁并切换文案、松手弹密码框且弹簧回位；300px 短下拉只回弹不弹框；正确密码后逐帧录屏确认隐藏书架内容从接近透明淡入。模拟器无触觉硬件，震感待真机复核。
