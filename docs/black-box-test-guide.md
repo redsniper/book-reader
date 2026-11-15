@@ -576,7 +576,9 @@ adb shell run-as com.moyue.reader.debug cat shared_prefs/hidden_shelf_security.x
   说明：从阅读器用外部 `file://` 打开扫描 PDF 时，日志记录 `external.done result="opened"` 且新书已创建，
   但模拟器画面仍停留在旧书（仓库已记录的 SurfaceFlinger 帧不刷新异常）；本次改用书架入口打开该 PDF
   完成时钟与页图核对，`content://`/外部打开流程由 M21 用例覆盖。
-- 结果（真机）：待用户复核。
+- 真机结果：**通过**（2026-11-15，Xiaomi 15 Ultra / HyperOS，Debug `1.5.0-debug`，用户确认）。
+  用户按本用例完成真机复测，左上角时间的显示位置、24 小时制、分钟刷新、顶栏显隐与正文不遮挡
+  均符合预期；M22 不再有待真机复核项。
 
 ---
 
