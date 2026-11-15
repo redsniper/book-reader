@@ -129,7 +129,7 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
   - 首开分页时序：Loading 阶段的默认视口被丢弃，真实设置发布后只分页一次，非默认字号重开位置不漂移；
   - StaticLayout 分页器（Robolectric 原生图形）；
   - 外部打开：`ACTION_VIEW` 解析（非 VIEW / http / 无 data 均忽略）、清单过滤器可被系统按四种 MIME 查询到且不劫持图片视频、串行导入、成功自动打开、重复提示脱敏、MIME 兜底、格式不支持复用导入文案。
-- **按仓库要求，测试源码不纳入 Git 跟踪**（见 `.gitignore` 的 `app/src/test/`、`app/src/androidTest/`）；本地工作区仍保留完整测试。
+- **测试源码已纳入 Git 跟踪**：`app/src/test/` 包含上述单元测试与 Robolectric 集成测试；测试全部自包含（JUnit 临时目录、Room 内存库、真实解析器），不读取 `.env.local`、不依赖本机绝对路径或真机/模拟器。`app/src/androidTest/` 仍需设备，保持不跟踪。
 - 测试报告：`app/build/reports/tests/testDebugUnitTest/index.html`
 
 ## 真机反馈与诊断日志

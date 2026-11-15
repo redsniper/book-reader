@@ -613,7 +613,7 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
   M13 修复后复测通过（BB-19 大字号 16 页排满、旋转/分屏位置差 ≤1 页；BB-20 百万字首开 9s 内、
   单套页索引；BB-21 软键盘跳页无遮罩、缓存命中与损坏回退正常）。首轮失败记录保留在
   `docs/black-box-test-guide.md` §4.1 作为回归参考。
-- 测试源码按仓库要求不纳入 Git（`app/src/test/`、`app/src/androidTest/` 已加入 `.gitignore`），本地工作区保留并可运行。
+- 测试源码：单元测试与 Robolectric 集成测试（`app/src/test/`）已纳入 Git；测试自包含，不依赖 `.env.local`、本机绝对路径、真机/模拟器或仓库外夹具。`app/src/androidTest/` 仍需设备，保持不跟踪。
 - 偏差记录：
   - 设计阶段的“段间距”设置在实现中移除，避免 Compose 渲染与 StaticLayout 分页测量不一致；需求未要求该项。
   - 封面文件名统一为 `cover.img`（按字节保存，按内容解码），而非设计初稿的 `cover.jpg`。
@@ -641,5 +641,10 @@ M15 时自动化测试 138 项通过，Lint 0 Error / 57 Warning。
   - 下拉动画不引入新依赖：位移用布局阶段 `Modifier.offset`，提示淡入用 `AnimatedVisibility`，
     转场透明度用绘制阶段 `graphicsLayer`，拖动时只触发布局与重绘，不重组整页；
     回弹由单次帧时钟动画完成。
+  - **测试源码纳管政策变更（用户确认，2026-11-15）**：单元测试与 Robolectric 集成测试
+    （`app/src/test/`，共 37 个源码文件、173 项测试）纳入 Git 跟踪；测试均使用 JUnit 临时目录、
+    Room 内存库与真实解析器，不依赖本机 `.env.local`、绝对路径、真机/模拟器或仓库外夹具。
+    `app/src/androidTest/` 仍需设备，继续保持不跟踪。历史验收记录中的“测试源码保持本地不纳入 Git”
+    仅代表当时状态，自本日期起失效。
 
 > 本文件在每完成一个模块后更新；验收结果与偏差记录追加在文末。

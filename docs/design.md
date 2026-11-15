@@ -1122,7 +1122,8 @@ stateDiagram-v2
 - **不 mock 数据结构**：使用真实 Room 内存库、真实解析器、真实文件副本；仅对平台边界（PdfRenderer、Clock、BatteryStatusProvider、Dispatcher）使用可控替身。
 - **确定性**：编码、密码盐值、时间、调度器均可注入；测试不依赖真实等待。
 - **契约测试**：所有 `BookParser` 共用"章节连续、字符偏移全覆盖、标题非空"的契约测试。
-- **回归夹具**：`src/test/resources/fixtures/` 放置中文 TXT、GBK TXT、最小 EPUB、文本 PDF、扫描版 PDF（小页数）、损坏文件。
+- **回归夹具**：测试在 JUnit `TemporaryFolder` 中生成中文/GBK TXT、最小 EPUB、文本 PDF、扫描版 PDF（小页数）与损坏文件；不依赖 `src/test/resources/`、仓库外夹具或本机环境。
+- **可移植性**：测试源码随仓库跟踪（`app/src/test/`），只依赖 Gradle 依赖与 Robolectric；不读取 `.env.local`、本机绝对路径或设备数据。仪器测试（`app/src/androidTest/`）需要真机/模拟器，保持本地不跟踪。
 - **覆盖率目标**：领域层与数据层关键分支 ≥ 80%；核心分章/进度/密码算法 100% 分支覆盖（以人工检查为准）。
 
 ### 17.3 关键测试用例（摘要）
