@@ -177,6 +177,8 @@
     <string name="reader_chapter_progress">%1$d / %2$d 章</string>
     <string name="reader_tap_to_toggle">轻点页面显示/隐藏菜单</string>
     <string name="reader_clock_description">当前时间 %1$s</string>
+    <string name="reader_battery_percent">%1$s%%</string>
+    <string name="reader_battery_description">当前电量 %1$s%%</string>
     <string name="reader_scanned_page">第 %1$d 页</string>
     <string name="reader_page_load_failed">页面加载失败</string>
     <string name="reader_chapter_start">第 %1$d 章</string>

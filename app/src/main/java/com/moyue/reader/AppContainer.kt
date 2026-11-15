@@ -32,6 +32,8 @@ import com.moyue.reader.domain.service.ChapterSplitter
 import com.moyue.reader.domain.service.HiddenShelfManager
 import com.moyue.reader.domain.service.HiddenShelfSession
 import com.moyue.reader.domain.service.ProgressCalculator
+import com.moyue.reader.domain.system.BatteryStatusProvider
+import com.moyue.reader.platform.battery.AndroidBatteryStatusProvider
 import com.moyue.reader.platform.pagination.AndroidPageBreaker
 import com.moyue.reader.platform.pdf.PdfBoxTextExtractor
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +52,16 @@ class AppContainer(application: Application) {
 
     val dispatchers: DispatcherProvider = DefaultDispatcherProvider
     val clock: Clock = SystemClock
+
+    /**
+     * 阅读器顶部状态带的系统电量来源。
+     *
+     * 只持有 Application Context，广播接收器在阅读页订阅/退订时注册/注销；
+     * 不做进程级常驻监听，避免用户不在阅读时也持续接收广播。
+     */
+    val batteryStatusProvider: BatteryStatusProvider by lazy {
+        AndroidBatteryStatusProvider(appContext)
+    }
 
     /** 应用级协程作用域：退出阅读器后仍能完成进度落库。 */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

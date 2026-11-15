@@ -212,16 +212,18 @@ fun ReaderScreen(
         ) {
             val density = LocalDensity.current
             val horizontalPaddingPx = with(density) { settings.horizontalPaddingDp.dp.roundToPx() }
-            // 左上角时间带：行高用与 Text 相同的 Density 解析（sp 走系统字体缩放），
-            // 再换算回 dp 作为正文额外顶部留白；原有 18dp 页顶留白继续保留，
-            // 作为字体度量差异的缓冲。这样时间带随系统字体放大一起增高，
-            // 不会压到正文首行。
-            // 时间带是视口的一部分且始终预留：呼出/收起顶栏只影响时间文字显隐，
+            // 顶部状态带（左时间 / 右电量）：行高用与 Text 相同的 Density 解析
+            // （sp 走系统字体缩放），再换算回 dp 作为正文额外顶部留白；原有 18dp
+            // 页顶留白继续保留，作为字体度量差异的缓冲。这样状态带随系统字体放大
+            // 一起增高，不会压到正文首行。
+            // 状态带是视口的一部分且始终预留：呼出/收起顶栏只影响两端文字显隐，
             // 不改变页高，因此不会额外触发重排。
-            val clockBandDp = with(density) {
-                (CLOCK_LINE_HEIGHT.toPx() + CLOCK_TOP_PADDING.toPx() + CLOCK_GAP.toPx()).toDp()
+            val statusBandDp = with(density) {
+                (STATUS_BAND_LINE_HEIGHT.toPx() +
+                    STATUS_BAND_TOP_PADDING.toPx() +
+                    STATUS_BAND_GAP.toPx()).toDp()
             }
-            val pageTopPadding = READER_VERTICAL_PADDING + clockBandDp
+            val pageTopPadding = READER_VERTICAL_PADDING + statusBandDp
             val pageTopPaddingPx = with(density) { pageTopPadding.roundToPx() }
             val pageBottomPaddingPx = with(density) { READER_VERTICAL_PADDING.roundToPx() }
             val contentWidthPx = (constraints.maxWidth - horizontalPaddingPx * 2).coerceAtLeast(1)
@@ -333,14 +335,14 @@ fun ReaderScreen(
             else -> false
         }
 
-        // 左上角时间：只在正文就绪且顶栏隐藏时显示。时间带已计入上方视口并始终预留，
-        // 所以这里的显隐只影响一行文字，不会改变页高、页码或阅读进度。
-        // 浮层位于正文之上、顶栏之下；它没有点击手势，也不会拦截正文触摸。
-        // 时间带位于正文点击区之外，点击它不翻页、也不切换菜单。
-        val clockVisible = !chromeVisible &&
+        // 顶部状态带：左上角时间 + 右上角电量，只在正文就绪且顶栏隐藏时显示。
+        // 状态带已计入上方视口并始终预留，所以这里的显隐只影响两端文字，
+        // 不会改变页高、页码或阅读进度。浮层位于正文之上、顶栏之下；
+        // 两者都没有点击手势，也不会拦截正文触摸，点击它不翻页、不切换菜单。
+        val statusBandVisible = !chromeVisible &&
             (state is ReaderUiState.Ready || state is ReaderUiState.PdfReady)
         AnimatedVisibility(
-            visible = clockVisible,
+            visible = statusBandVisible,
             enter = fadeIn(),
             exit = fadeOut(),
             // inset 与正文完全同源：全屏只避让挖孔，分屏/自由窗口避让系统栏，
@@ -350,10 +352,30 @@ fun ReaderScreen(
                 .windowInsetsPadding(readerWindowInsets)
                 .padding(
                     start = settings.horizontalPaddingDp.dp,
-                    top = CLOCK_TOP_PADDING,
+                    top = STATUS_BAND_TOP_PADDING,
                 ),
         ) {
             ReaderClock(clock = container.clock, palette = palette)
+        }
+
+        // 电量是时间的右端点：同样的 inset、同样的顶部留白与行高，
+        // 因此两端在同一基线上；右边界与正文栏对齐。
+        AnimatedVisibility(
+            visible = statusBandVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(readerWindowInsets)
+                .padding(
+                    end = settings.horizontalPaddingDp.dp,
+                    top = STATUS_BAND_TOP_PADDING,
+                ),
+        ) {
+            ReaderBattery(
+                batteryStatus = container.batteryStatusProvider,
+                palette = palette,
+            )
         }
 
         AnimatedVisibility(

@@ -85,6 +85,8 @@
 | R-READ-06 | TXT / PDF 按内容关键字分章 | §10.3/§10.6 | `ChapterSplitterTest`、`PdfParserTest` | BB-01/03 |
 | R-READ-07 | 按页数跳转 | §11.5 | `PageIndexTest`、`ReaderViewModelTest` | BB-08 |
 | R-READ-08 | 自动记录进度 | §11.6 | `ProgressCalculatorTest`、`ProgressRoundTripTest` | BB-06 |
+| R-READ-09 | 阅读时左上角显示当前时间（24 小时制、整分钟刷新、顶栏隐藏时显示） | §12.1、§12.4 | `ReaderClockTest` | BB-25 |
+| R-READ-10 | 阅读时右上角显示横向电池图标（按百分比填充）+ 当前电量整数百分比；与时间同显同隐、系统广播更新 | §12.1、§12.4 | `BatteryPercentTest`、`AndroidBatteryStatusProviderTest`、`ReaderBatteryIconTest` | BB-26 |
 | R-SHELF-01 | 显示所有书籍 / 书名 / 进度 | §13.1 | `BookDaoTest`、`ShelfViewModelTest` | BB-04 |
 | R-SHELF-02 | 添加 / 删除书籍 | §10、§13.2 | `BookImportServiceTest`、`ShelfViewModelTest` | BB-01/05 |
 | R-SHELF-03 | 从“用其他应用打开”导入并进入阅读器 | §10.8、§13.6 | `ExternalOpenIntentTest`、`ExternalOpenViewModelTest`、清单过滤器测试 | BB-24 |
@@ -195,7 +197,7 @@ flowchart LR
 | **SRP 单一职责** | `BookImportService` 只编排导入；`TxtParser/EpubParser/PdfParser` 只负责格式解析；`ChapterSplitter` 只负责分章；`PageIndexBuilder` 只负责分页索引；`ProgressCalculator` 只负责进度换算；UI 不直接访问数据库或文件。 |
 | **OCP 开闭原则** | 新格式只需新增 `BookParser` 实现并注册到 `BookParserFactory`，导入服务和 UI 不改。新主题、新翻页模式通过枚举 + 策略扩展。 |
 | **LSP 里氏替换** | 所有 `BookParser` 遵守同一契约：返回稳定排序章节、非空标题、完整字符偏移；失败抛出 `BookParseException`，不返回半成品。测试以接口为单位复用契约测试。 |
-| **ISP 接口隔离** | `BookRepository`、`ReadingSettingsRepository`、`HiddenShelfRepository`、`BookParser`、`PageBreaker`、`TextMeasurer`、`Clock` 等接口保持最小化，便于替换和测试。 |
+| **ISP 接口隔离** | `BookRepository`、`ReadingSettingsRepository`、`HiddenShelfRepository`、`BookParser`、`PageBreaker`、`TextMeasurer`、`Clock`、`BatteryStatusProvider` 等接口保持最小化，便于替换和测试。 |
 | **DIP 依赖倒置** | ViewModel 只依赖领域接口；Room、DataStore、PDFBox、Android StaticLayout 等实现由 `AppContainer` 在组合根注入。 |
 
 ### 6.2 使用的设计模式
@@ -246,6 +248,7 @@ com.moyue.reader
 │   ├── parser/                  // BookParser, ParsedBook, ParseRequest, BookParserFactory
 │   ├── reader/                  // PageIndexBuilder, ReaderPageIndex,
 │   │                            // PageIndexCache / PageIndexSignature 契约
+│   ├── system/                  // BatteryStatusProvider（电量百分比观察接口）
 │   ├── service/
 │   │   ├── BookImportService.kt
 │   │   ├── ChapterSplitter.kt
@@ -264,6 +267,7 @@ com.moyue.reader
 ├── platform/
 │   ├── pagination/              // AndroidPageBreaker, StaticLayout 页边界计算
 │   ├── pdf/                     // PdfBoxTextExtractor, PdfPageRenderer
+│   ├── battery/                 // AndroidBatteryStatusProvider（系统电量广播）
 │   └── crypto/                  // Pbkdf2PasswordHasher
 └── ui/
     ├── theme/                   // 设计系统、ReaderTheme 颜色映射
@@ -811,10 +815,19 @@ class ReaderPageIndex(
   点击它不会翻页或切换菜单，点击正文区域仍按原逻辑操作。
   颜色取当前主题正文色并降低 alpha（约 0.72），避免羊皮纸/青竹主题下 secondary 对比度不足；
   系统字体放大时时间带同步增高。时间不因设备 12 小时制偏好或 locale 数字字形变化。
-- 顶部时间带：正文顶部额外预留“时间行高 + 上下间距”（按 Compose 同一 `Density` 解析 sp 后
+- 右上角电量：正文就绪且顶栏隐藏时，在屏幕右上角（与正文右边界对齐）显示横向电池图标
+  + 当前电量整数百分比（如 `47%`），与左上角时间同处一条顶部状态带、
+  同字号/行高/主题正文色 alpha。电池图标内部填充宽度与百分比严格成比例，轮廓固定不变；
+  图标只表达“这是设备电量”，精确数值由文字负责，不带闪电/充电状态，也不做低电量变色。
+  电量来自系统 `ACTION_BATTERY_CHANGED` sticky 广播，只在整数百分比变化时更新，不做轮询；
+  不进入 `ReaderUiState`、不持久化、不写诊断日志。呼出顶栏时与时间同步淡出，收起后同步淡入。
+  电量图标与文本没有点击手势，不拦截正文触摸；系统无法给出有效电量时两者都不显示。
+  电量百分比固定使用 ASCII 数字，不随 locale 改变字形；图标随系统字体缩放但不撑高状态带。
+- 顶部状态带：正文顶部额外预留“状态行高 + 上下间距”（按 Compose 同一 `Density` 解析 sp 后
   换算为其像素高度，1.0 字体缩放下约 22dp）。该带**始终**计入分页视口（左右、上下、扫描 PDF 共用），
-  顶栏显隐只切换时间文字显隐，不改变页高、页码或阅读进度，也不触发重排；代价是每页比旧版本
-  少约半行，首次打开会因视口高度变化重排一次，旧排版缓存按 LRU 自然淘汰。
+  时间为左端点、电量为右端点，两端共享同一行高与间距；顶栏显隐只切换这两个文本的显隐，
+  不改变页高、页码或阅读进度，也不触发重排；代价是每页比旧版本少约半行，
+  首次打开会因视口高度变化重排一次，旧排版缓存按 LRU 自然淘汰。
 - 点击页面中部切换顶部/底部栏；左右边缘点击翻页（左右模式）；垂直模式点击仅切换栏。
 - 左右模式：`HorizontalPager` 全屏滑动，支持快速滑动；页面切换有轻微滑动动画。
 - 上下模式：`LazyColumn` 连续排列整页文本；滚动停止后记录首个可见页。
@@ -874,6 +887,9 @@ sealed interface ReaderUiState {
 - 阅读器 `DisposableEffect` 恢复系统栏、清除常亮标记。
 - 左上角时间的刷新协程绑定阅读页组合，页面退出即取消；应用进入后台时即使定时器被冻结，
   回到前台后下一轮也按当前系统时间重算。时间不写入 `SavedState`/DataStore，不属于进度数据。
+- 右上角电量的系统广播监听同样绑定阅读页组合与生命周期：应用进入后台时注销接收器，
+  回到前台重新注册并立即读取 sticky 电量；进程重启后不保留旧值。
+  电量不写入 `SavedState`/DataStore，不属于进度数据，也不写诊断日志。
 - 分页/解析协程绑定 `viewModelScope`；页面销毁或会话锁定自动取消，避免锁定后仍发布分页结果。
 
 ---
@@ -994,6 +1010,8 @@ sealed interface ReaderUiState {
 
 - 所有图标按钮提供 `contentDescription`。
 - 点击目标 ≥ 48 dp；文本对比度满足 WCAG AA。
+- 阅读器左上角时间与右上角电量提供完整语义（“当前时间 23:11”“当前电量 47%”），读屏不逐位朗读数字与符号；
+  电池图标是装饰性元素，不单独播报，避免出现两次“电量”。
 - 支持系统字体缩放，但阅读正文使用用户设置字号，避免双重缩放导致分页异常（sp 已含系统缩放；在设置页提示超大字号可能减少每页字数）。
 - 触觉反馈：下拉触发、翻页边界、密码错误。
 - 动画：书架下拉跟手 + 弹簧回弹、隐藏书架淡入上浮、卡片进入淡入上浮；阅读页切换使用 Pager 原生动画；避免浮夸动效。
@@ -1093,15 +1111,15 @@ stateDiagram-v2
 
 | 层级 | 工具 | 覆盖内容 |
 | --- | --- | --- |
-| 单元测试（JVM） | JUnit4 + coroutines-test | 编码探测、文本规范化、分章规则、进度计算、页索引、密码哈希、下拉检测、失败节流、设置校验、主题映射、EPUB HTML 清洗、格式识别、诊断日志滚动/节流、阅读器时钟 24 小时制格式与整分钟刷新间隔 |
-| 单元测试（Android 依赖） | Robolectric | StaticLayout 分页器、Room DAO、DataStore、PDFBox 文本提取、导入服务、隐藏书架流程、外部打开 Intent 与清单过滤器 |
+| 单元测试（JVM） | JUnit4 + coroutines-test | 编码探测、文本规范化、分章规则、进度计算、页索引、密码哈希、下拉检测、失败节流、设置校验、主题映射、EPUB HTML 清洗、格式识别、诊断日志滚动/节流、阅读器时钟 24 小时制格式与整分钟刷新间隔、电量 level/scale 百分比解析与取整/边界、电池图标填充比例与越界截断 |
+| 单元测试（Android 依赖） | Robolectric | StaticLayout 分页器、Room DAO、DataStore、PDFBox 文本提取、导入服务、隐藏书架流程、外部打开 Intent 与清单过滤器、电量广播提供器的注册/推送/注销 |
 | 集成测试 | Robolectric + 真实 Room/文件/解析器 | TXT/EPUB/PDF 导入 → 书架 → 打开 → 分页 → 进度保存/恢复 → 隐藏/解锁 → 删除；扫描 PDF 降级；外部打开 → 自动进入阅读器 |
 | UI 仪器测试 | Compose UI Test（需模拟器） | 书架渲染、密码对话、阅读器设置面板、翻页手势；作为可选验证 |
 | 黑盒验收 | 用户 + 模拟器 | 见 `docs/black-box-test-guide.md` |
 
 ### 17.2 测试原则
 
-- **不 mock 数据结构**：使用真实 Room 内存库、真实解析器、真实文件副本；仅对平台边界（PdfRenderer、Clock、Dispatcher）使用可控替身。
+- **不 mock 数据结构**：使用真实 Room 内存库、真实解析器、真实文件副本；仅对平台边界（PdfRenderer、Clock、BatteryStatusProvider、Dispatcher）使用可控替身。
 - **确定性**：编码、密码盐值、时间、调度器均可注入；测试不依赖真实等待。
 - **契约测试**：所有 `BookParser` 共用"章节连续、字符偏移全覆盖、标题非空"的契约测试。
 - **回归夹具**：`src/test/resources/fixtures/` 放置中文 TXT、GBK TXT、最小 EPUB、文本 PDF、扫描版 PDF（小页数）、损坏文件。
@@ -1125,6 +1143,12 @@ stateDiagram-v2
 14. 会话：隐藏阅读中锁定会话→阅读器立即进入锁定错误页并保存进度；隐藏书架锁定→退回普通书架并显示锁定提示；普通书不受影响；配置变更不误锁。
 15. 阅读器时钟：固定输出 `HH:mm` 24 小时制（23:11、09:05、00:00），`Locale.ROOT` 下不受系统 12 小时制偏好影响；
     刷新间隔对齐下一个整分钟，整分钟处返回完整 60,000ms，避免 0 延迟忙循环。
+16. 阅读器电量：`ACTION_BATTERY_CHANGED` 的 level/scale 解析为 0–100 整数（85/100→85、2/3→67、0/100→0、
+    100/100→100、超出 scale 截断为 100）；scale 缺失但 level 在 0–100 时按百分比回退，level 非法时丢弃。
+    订阅时立即推送 sticky 电量，广播更新只推送整数百分比变化；取消订阅后接收器注销，不再接收。
+    电量与时间同显同隐，顶栏切换不改变页高、页码或触发重排。
+    图标填充比例 = clamp(percent, 0, 100) / 100：0% 不画填充、100% 填满内胆、越界值不溢出边框；
+    图标按 14sp 随系统字体缩放，但小于 16sp 状态行高，不改变分页视口。
 
 ---
 

@@ -11,8 +11,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.moyue.reader.R
 import com.moyue.reader.core.Clock
 import com.moyue.reader.ui.theme.ReaderPalette
@@ -32,35 +30,9 @@ import kotlinx.coroutines.delay
  *   放在本地状态里可以把重组限制在时钟文本。
  * - 时间不持久化、不写日志、不参与阅读进度，进程重启后直接重新读取系统时间。
  *
- * 时间带尺寸常量同时被 [ReaderScreen] 用于计算分页视口：时间行高必须与
- * 渲染时 `Text` 的 lineHeight 完全一致，否则分页器与正文会使用不同的可用高度。
+ * 状态带尺寸常量统一定义在 ReaderStatusBand.kt，同时被 [ReaderScreen] 用于计算分页视口：
+ * 时间行高必须与渲染时 `Text` 的 lineHeight 完全一致，否则分页器与正文会使用不同的可用高度。
  */
-
-/** 时间带上方的留白。 */
-internal val CLOCK_TOP_PADDING = 3.dp
-
-/**
- * 时间行高（sp）。
- *
- * 必须与 [ReaderClock] 中 Text 的 lineHeight 相同。用 sp 而非固定 dp，
- * 是为了在系统字体放大时让时间带一起变高，避免压到正文首行。
- */
-internal val CLOCK_LINE_HEIGHT = 16.sp
-
-/** 时间行与正文页之间的呼吸间距。 */
-internal val CLOCK_GAP = 3.dp
-
-/** 时间字号。 */
-internal val CLOCK_FONT_SIZE = 12.sp
-
-/**
- * 时间文字的不透明度。
- *
- * 不用 `palette.secondary`：羊皮纸主题下 secondary 与背景对比度约 4.2:1，
- * 低于小字号 WCAG AA 的 4.5:1；在正文色上降低 alpha 既能弱化存在感，
- * 四种主题下也仍满足 AA。
- */
-private const val CLOCK_TEXT_ALPHA = 0.72f
 
 /** 固定 24 小时制与 ASCII 数字，不受系统 12/24 小时偏好或 locale 数字字形影响。 */
 private val CLOCK_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
@@ -93,7 +65,7 @@ internal fun millisUntilNextMinute(epochMillis: Long): Long =
  * 阅读页退出即取消；应用进入后台时即使 timer 被系统冻结，回到前台后
  * 下一轮也会按当前系统时间重算，不会长期停留在旧值。
  *
- * 时钟本身没有点击手势，也不会拦截下方正文的触摸；时间带位于正文点击区之外，
+ * 时钟本身没有点击手势，也不会拦截下方正文的触摸；状态带位于正文点击区之外，
  * 点击它不会翻页或切换菜单，点击正文区域仍按原逻辑操作。
  */
 @Composable
@@ -124,10 +96,10 @@ internal fun ReaderClock(
     Text(
         text = text,
         modifier = modifier.clearAndSetSemantics { contentDescription = description },
-        color = palette.text.copy(alpha = CLOCK_TEXT_ALPHA),
+        color = palette.text.copy(alpha = STATUS_BAND_TEXT_ALPHA),
         fontFamily = FontFamily.SansSerif,
-        fontSize = CLOCK_FONT_SIZE,
-        lineHeight = CLOCK_LINE_HEIGHT,
+        fontSize = STATUS_BAND_FONT_SIZE,
+        lineHeight = STATUS_BAND_LINE_HEIGHT,
         fontWeight = FontWeight.Medium,
         maxLines = 1,
     )
