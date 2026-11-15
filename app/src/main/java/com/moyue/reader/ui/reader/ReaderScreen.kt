@@ -212,9 +212,21 @@ fun ReaderScreen(
         ) {
             val density = LocalDensity.current
             val horizontalPaddingPx = with(density) { settings.horizontalPaddingDp.dp.roundToPx() }
-            val verticalPaddingPx = with(density) { READER_VERTICAL_PADDING.roundToPx() }
+            // 左上角时间带：行高用与 Text 相同的 Density 解析（sp 走系统字体缩放），
+            // 再换算回 dp 作为正文额外顶部留白；原有 18dp 页顶留白继续保留，
+            // 作为字体度量差异的缓冲。这样时间带随系统字体放大一起增高，
+            // 不会压到正文首行。
+            // 时间带是视口的一部分且始终预留：呼出/收起顶栏只影响时间文字显隐，
+            // 不改变页高，因此不会额外触发重排。
+            val clockBandDp = with(density) {
+                (CLOCK_LINE_HEIGHT.toPx() + CLOCK_TOP_PADDING.toPx() + CLOCK_GAP.toPx()).toDp()
+            }
+            val pageTopPadding = READER_VERTICAL_PADDING + clockBandDp
+            val pageTopPaddingPx = with(density) { pageTopPadding.roundToPx() }
+            val pageBottomPaddingPx = with(density) { READER_VERTICAL_PADDING.roundToPx() }
             val contentWidthPx = (constraints.maxWidth - horizontalPaddingPx * 2).coerceAtLeast(1)
-            val contentHeightPx = (constraints.maxHeight - verticalPaddingPx * 2).coerceAtLeast(1)
+            val contentHeightPx =
+                (constraints.maxHeight - pageTopPaddingPx - pageBottomPaddingPx).coerceAtLeast(1)
             val titleHeightPx = with(density) { TITLE_LINE_HEIGHT.toPx() + TITLE_GAP.toPx() }
             // 字号与行高必须和正文 Text 用同一个 Density 解析：
             // Android 14+ 的系统字体缩放是非线性的，不能手算 sp×density×fontScale；
@@ -245,8 +257,10 @@ fun ReaderScreen(
                 Modifier
                     .fillMaxSize()
                     .padding(
-                        horizontal = settings.horizontalPaddingDp.dp,
-                        vertical = READER_VERTICAL_PADDING,
+                        start = settings.horizontalPaddingDp.dp,
+                        end = settings.horizontalPaddingDp.dp,
+                        top = pageTopPadding,
+                        bottom = READER_VERTICAL_PADDING,
                     ),
             ) {
                 when (val current = state) {
@@ -317,6 +331,29 @@ fun ReaderScreen(
             is ReaderUiState.Ready -> current.chromeVisible
             is ReaderUiState.PdfReady -> current.chromeVisible
             else -> false
+        }
+
+        // 左上角时间：只在正文就绪且顶栏隐藏时显示。时间带已计入上方视口并始终预留，
+        // 所以这里的显隐只影响一行文字，不会改变页高、页码或阅读进度。
+        // 浮层位于正文之上、顶栏之下；它没有点击手势，也不会拦截正文触摸。
+        // 时间带位于正文点击区之外，点击它不翻页、也不切换菜单。
+        val clockVisible = !chromeVisible &&
+            (state is ReaderUiState.Ready || state is ReaderUiState.PdfReady)
+        AnimatedVisibility(
+            visible = clockVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            // inset 与正文完全同源：全屏只避让挖孔，分屏/自由窗口避让系统栏，
+            // 保证时间不会被挖孔或状态栏遮住；左边界与正文栏对齐。
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .windowInsetsPadding(readerWindowInsets)
+                .padding(
+                    start = settings.horizontalPaddingDp.dp,
+                    top = CLOCK_TOP_PADDING,
+                ),
+        ) {
+            ReaderClock(clock = container.clock, palette = palette)
         }
 
         AnimatedVisibility(
