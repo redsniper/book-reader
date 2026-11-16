@@ -1,13 +1,5 @@
 package com.moyue.reader.platform.pagination
 
-import android.annotation.SuppressLint
-
-import android.graphics.Paint
-import android.graphics.Typeface
-import android.text.Layout
-import android.text.StaticLayout
-import android.text.TextPaint
-import com.moyue.reader.domain.model.FontFamilyOption
 import com.moyue.reader.domain.reader.PageBreaker
 import com.moyue.reader.domain.reader.PageLayoutSpec
 import com.moyue.reader.domain.reader.PageRange
@@ -20,19 +12,35 @@ import com.moyue.reader.domain.reader.PageRange
  * - 可以直接拿到"行"的边界，按行装箱得到页字符区间；
  * - 纯本地测量，不依赖 Compose 组合，可放到后台线程执行。
  *
+ * 与正文绘制的关系：
+ * - 测量和绘制必须共用 [PageTextLayoutFactory]，不能一边用 StaticLayout、
+ *   一边用 Compose `Text`。两套行高实现（`setLineSpacing` 的行盒 vs
+ *   `LineHeightStyleSpan` 的 `ceil(lineHeightPx)` 重排）对每行取整不同，2.0× 大行距
+ *   满页时误差累积会把页尾行推出页框并裁掉。
+ * - 页面独立布局高度为 `行数 × 自然行高 + (行数-1) × extra`，恰好比本分页器
+ *   `getLineBottom` 装箱高度少一个 extra（章节末页两边都省略末行 extra），因此
+ *   正文永远不会超出这里算出的页框。
+ *
  * 章节首页预留标题高度；页与页之间不会截断行。空章节返回一个空页区间。
  *
- * 注意：任何会改变页边界的修改都必须递增 `PAGE_INDEX_ENGINE_VERSION`，
- * 否则已落盘的页索引缓存会与新的测量结果不一致。
+ * 注意：任何会改变页边界的修改（含 [PageTextLayoutFactory] 的参数）都必须递增
+ * `PAGE_INDEX_ENGINE_VERSION`，否则已落盘的页索引缓存会与新的测量结果不一致。
  */
 class AndroidPageBreaker : PageBreaker {
 
     override fun breakChapter(title: String, text: String, spec: PageLayoutSpec): List<PageRange> {
         if (text.isEmpty()) return listOf(PageRange(0, 0))
 
-        val paint = createTextPaint(spec)
-        val width = spec.widthPx.coerceAtLeast(1)
-        val layout = buildLayout(text, paint, width, spec.lineHeightPx)
+        val paint = PageTextLayoutFactory.createTextPaint(
+            fontFamily = spec.fontFamily,
+            fontSizePx = spec.fontSizePx,
+        )
+        val layout = PageTextLayoutFactory.buildLayout(
+            text = text,
+            paint = paint,
+            widthPx = spec.widthPx,
+            lineHeightPx = spec.lineHeightPx,
+        )
         if (layout.lineCount <= 0) return listOf(PageRange(0, text.length))
 
         val firstPageHeight = (spec.heightPx - spec.chapterTitleHeightPx).toFloat()
@@ -68,41 +76,5 @@ class AndroidPageBreaker : PageBreaker {
             pages[pages.lastIndex] = PageRange(last.start, text.length)
         }
         return pages
-    }
-
-    private fun createTextPaint(spec: PageLayoutSpec): TextPaint {
-        val typeface = when (spec.fontFamily) {
-            FontFamilyOption.DEFAULT -> Typeface.DEFAULT
-            FontFamilyOption.SERIF -> Typeface.SERIF
-            FontFamilyOption.SANS -> Typeface.SANS_SERIF
-            FontFamilyOption.MONOSPACE -> Typeface.MONOSPACE
-        }
-        return TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = spec.fontSizePx
-            this.typeface = typeface
-            color = android.graphics.Color.BLACK
-        }
-    }
-
-    // StaticLayout.Builder#setBreakStrategy 使用 Layout.BREAK_STRATEGY_*；
-    // Lint 的 WrongConstant 规则误将其与 API 29 的 LineBreaker 常量比较，这里显式抑制。
-    @SuppressLint("WrongConstant")
-    private fun buildLayout(
-        text: String,
-        paint: TextPaint,
-        width: Int,
-        targetLineHeightPx: Float,
-    ): StaticLayout {
-        val metrics = paint.fontMetrics
-        val naturalLineHeight = (metrics.descent - metrics.ascent).coerceAtLeast(1f)
-        // Compose 的 lineHeight 是行盒总高；StaticLayout 在此基础上增加 extra 间距。
-        val extraSpacing = (targetLineHeightPx - naturalLineHeight).coerceAtLeast(0f)
-        return StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setIncludePad(false)
-            .setLineSpacing(extraSpacing, 1f)
-            .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
-            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-            .build()
     }
 }

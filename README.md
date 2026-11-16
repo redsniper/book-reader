@@ -16,6 +16,7 @@
 - 电量来自系统 `ACTION_BATTERY_CHANGED` sticky 广播，无需任何权限、不做轮询；图标只表示电量语义，不显示充电状态，不写入进度或诊断日志。
 - 阅读主题：羊皮纸（日间黄底黑字）、夜读（黑底浅字）、青竹、宣白。
 - 字体族、字号、行距、左右边距可调；改动排版后按字符锚点保持阅读位置。设置面板固定全展开，字号/行距/边距滑块连续跟手、松手后只重排一次，预览卡片固定高度，拖动时面板与滑块不位移。
+- 正文绘制与分页共用同一个 `StaticLayout` 工厂（Canvas 绘制），页尾行不会因 Compose `Text` 行高取整而出现半行裁切。
 - 页索引按“内容 + 章节 + 排版参数 + 引擎版本”缓存到应用私有目录：重开同一本书、同排版跳页不再重新排版；字号等排版变化会重排一次并自动更新缓存。打开非默认字号的书只按真实字号排版一次，阅读位置与关闭前一致。
 - TXT 自动识别 UTF-8 / UTF-16 / GB18030 编码并按中英文关键字分章；无标题文本按段落回退分节。
 - EPUB 支持 EPUB2 NCX 的 DTD 声明、字体混淆（IDPF/Adobe）与指向不存在条目的陈旧加密清单；只有正文真正被加密的 DRM 书才拒绝。
@@ -114,7 +115,7 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
 
 ## 测试
 
-- 173 项 JVM/Robolectric 测试全部通过，覆盖：
+- 176 项 JVM/Robolectric 测试全部通过，覆盖：
   - 编码探测、文本规范化、自动分章、页索引、进度换算；
   - PBKDF2 密码哈希、失败节流、下拉解锁状态机与橡皮筋位移映射；
   - 真实 Room DAO、DataStore、SharedPreferences；
@@ -128,6 +129,7 @@ adb shell am start -n com.moyue.reader.debug/com.moyue.reader.MainActivity
   - 阅读器右上角电量：`level/scale` 换算与四舍五入、超界截断、缺失 scale 回退、非法值丢弃；Robolectric 验证系统广播推送、整数去重与取消订阅注销；电池图标填充比例与 0/100 边界、越界截断；
   - 首开分页时序：Loading 阶段的默认视口被丢弃，真实设置发布后只分页一次，非默认字号重开位置不漂移；
   - StaticLayout 分页器（Robolectric 原生图形）；
+  - 页布局装箱不变量：每页独立 StaticLayout 高度不超过分页可用高度、行数与章节布局一致（含 14/24/32sp、1.2/1.8/2.0/2.4×、四字体与用户复现配置）；
   - 外部打开：`ACTION_VIEW` 解析（非 VIEW / http / 无 data 均忽略）、清单过滤器可被系统按四种 MIME 查询到且不劫持图片视频、串行导入、成功自动打开、重复提示脱敏、MIME 兜底、格式不支持复用导入文案。
 - **测试源码已纳入 Git 跟踪**：`app/src/test/` 包含上述单元测试与 Robolectric 集成测试；测试全部自包含（JUnit 临时目录、Room 内存库、真实解析器），不读取 `.env.local`、不依赖本机绝对路径或真机/模拟器。`app/src/androidTest/` 仍需设备，保持不跟踪。
 - 测试报告：`app/build/reports/tests/testDebugUnitTest/index.html`
@@ -152,7 +154,7 @@ UI (Compose + MVVM) → domain ← data / platform
 
 - `domain/`：模型、仓库接口、解析契约、分章/进度/密码/下拉检测等领域服务。
 - `data/`：Room、DataStore、SharedPreferences、私有文件存储、页索引缓存、TXT/EPUB/PDF 解析。
-- `platform/`：StaticLayout 分页器、PDFBox 文本提取、PdfRenderer 扫描页渲染。
+- `platform/`：StaticLayout 分页器与正文绘制共用的 `PageTextLayoutFactory`、PDFBox 文本提取、PdfRenderer 扫描页渲染。
 - `ui/`：书架、阅读器、设置、导航、设计系统。
 - `AppContainer` 手写组合根；ViewModel 只依赖接口。
 - 详细设计见 [docs/design.md](docs/design.md)，分步计划见 [docs/implementation-plan.md](docs/implementation-plan.md)。
@@ -164,7 +166,7 @@ app/src/main/java/com/moyue/reader/
 ├── core/            # 调度器、时钟、外部打开请求队列
 ├── domain/          # 模型、仓库接口、解析契约、领域服务
 ├── data/            # Room、DataStore、文件、页索引缓存、解析器、诊断日志
-├── platform/        # 分页、PDF 文本/渲染适配
+├── platform/        # 分页与正文同源的文本布局、PDF 文本/渲染适配
 └── ui/              # 书架、阅读器、设置、导航、主题、外部打开浮层
 docs/
 ├── design.md

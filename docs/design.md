@@ -674,7 +674,10 @@ sealed class BookParseException(message: String) : Exception(message) {
 
 ### 11.1 设计目标
 
-- 分页结果与真实渲染一致（使用 `StaticLayout` 测量）。
+- 分页结果与真实渲染一致：分页测量与正文绘制**共用同一个 `StaticLayout` 工厂**，而不是
+  “分页用 StaticLayout、正文用 Compose Text”两套行高实现。
+- 页尾行必须完整显示：页面内容高度不得超过页框；任何字号/行距/字体/主题/翻页模式下
+  都不得出现半行被裁切。
 - 前后翻页、按页跳转、TOC 跳章共用一份全书页索引。
 - 字号/字体/行距/边距变化时重新分页，但阅读位置不丢。
 - 分页可单元测试：核心算法与 Android 测量解耦。
@@ -714,6 +717,23 @@ class PageIndexBuilder(private val breaker: PageBreaker) {
   - 每页最多装入 `heightPx`；首页可用高度 = `heightPx - chapterTitleHeightPx`。
   - 页边界取整行起点/终点，保证不截断行。
   - 空章节产生一个占位页（不显示空文本）。
+- **正文绘制与分页同源**（M24）：
+  - `PageTextLayoutFactory` 是唯一的 `TextPaint` / `StaticLayout` 构建入口：Typeface 映射、
+    `includePad=false`、`setLineSpacing(lineHeightPx - 自然行高, 1f)`、
+    `BREAK_STRATEGY_SIMPLE`、`HYPHENATION_FREQUENCY_NONE` 全部集中在这里。
+  - 阅读页正文不再使用 Compose `Text` 绘制，而是用 Compose `Canvas` 绘制同一个工厂构建的
+    `StaticLayout`。Compose `Text` 的 `LineHeightStyleSpan` 会按 `ceil(lineHeightPx)` 重新
+    分配每行高度并裁剪首/末行，与分页器的整数行底装箱存在逐行取整差异；2.0× 大行距满页时
+    误差累积会把页尾行推到页框之外并被 `clipToBounds()` 裁掉（真机已复现）。
+  - 页面独立布局的高度 `N×自然行高 + (N-1)×extra` 恒等于分页装箱高度减去最后一个 extra
+    （章节末页两边都省略末行 extra，高度相等）；因此绘制内容不会超出分页允许的页框。
+  - 绘制前用 `trimEnd('\n')` 裁掉页面区间末尾换行：分页区间会包含行尾换行符，独立布局若保留
+    会多出一个空行；该空行不可见，但会让布局高度失真。只裁末尾换行，不动正文。
+  - 章节标题仍由 Compose `Text` 绘制（单行省略、SemiBold），分页为其预留
+    `TITLE_LINE_HEIGHT + TITLE_GAP`，实际自然行高小于预留值，正文区域只会更大，不会更小。
+  - 正文 Canvas 通过 `Modifier.semantics { text = AnnotatedString(...) }` 保留读屏语义。
+  - 该修复不改变页边界、页数、进度锚点与缓存签名，`PAGE_INDEX_ENGINE_VERSION` 保持 1；
+    旧页索引缓存继续有效。
 - `PageIndexBuilder` 把所有章节的页拼接为**全局页索引**，并用数组记录每页起始字符、章节起始页，供二分查找。
 - **扫描版 PDF 不分页**：页索引直接映射 `0..pageCount-1`，`PageInfo.pdfPageIndex` 有值。
 
@@ -738,7 +758,7 @@ interface PageIndexCache {
 - 阅读页使用 `BoxWithConstraints` 获得可用宽高，扣除内边距后计算 `PageLayoutSpec`。视口规则：
   - **全屏沉浸**：只避让物理挖孔（`WindowInsets.displayCutout`），不避让可隐藏的状态栏/导航栏，也不避让 IME。系统栏的临时显隐、跳页键盘、TOC 底部弹层都不得改变分页视口；否则同一本书会生成多套页索引并触发二次整书重排。
   - **分屏/自由窗口**：使用 `WindowInsets.safeDrawing`（系统栏由系统保留），窗口尺寸变化属于真实排版变化。
-  - 字号与行高由正文 `Text` 使用同一个 `LocalDensity` 解析：`settings.fontSizeSp.sp.toPx()` 与 `(settings.fontSizeSp × lineHeightMultiplier).sp.toPx()`，再随 `ReaderViewport` 传给分页器。**禁止**在 ViewModel 里手算 `sp × density × fontScale`：Android 14+ 的系统字体缩放是非线性的，手算会与渲染字号不一致，造成大字号下半屏空白。
+  - 字号与行高由 `ReaderScreen` 使用同一个 `LocalDensity` 解析：`settings.fontSizeSp.sp.toPx()` 与 `(settings.fontSizeSp × lineHeightMultiplier).sp.toPx()`，随 `ReaderViewport` 传给分页器，并原样传给正文 Canvas 绘制器（禁止绘制器重新解析 sp）。**禁止**在 ViewModel 里手算 `sp × density × fontScale`：Android 14+ 的系统字体缩放是非线性的，手算会与渲染字号不一致，造成大字号下半屏空白。
   - `ReaderViewModel` 只由 `onViewportMeasured` 驱动重排；`applySettings` 仅更新状态，避免一次设置变更触发两次分页。主题/翻页模式不改变视口或字号，因此不重排。
   - **首开只排一次**：加载阶段页面还没有真实设置，此时的视口不能用于分页。设置读取完成后，`Paginating` 状态必须携带真实 `ReaderSettings`，`ReaderScreen` 用同一帧的 `LocalDensity` 重新测量并只触发一次分页；`ReaderViewModel` 在进入 `Paginating` 前丢弃 Loading 阶段的视口。否则会先按默认字号排一套索引，再按用户字号排第二套；第二套只能以第一套的“页起点”为锚点，页内字符偏移丢失，表现为重开非默认字号（或刚改完字号）时阅读位置向前跳。
 - 签名只包含会影响页边界的输入。主题、左右/上下翻页模式不改变字符页边界，因此不参与签名，也不触发重排。
@@ -1112,7 +1132,7 @@ stateDiagram-v2
 | 层级 | 工具 | 覆盖内容 |
 | --- | --- | --- |
 | 单元测试（JVM） | JUnit4 + coroutines-test | 编码探测、文本规范化、分章规则、进度计算、页索引、密码哈希、下拉检测、失败节流、设置校验、主题映射、EPUB HTML 清洗、格式识别、诊断日志滚动/节流、阅读器时钟 24 小时制格式与整分钟刷新间隔、电量 level/scale 百分比解析与取整/边界、电池图标填充比例与越界截断 |
-| 单元测试（Android 依赖） | Robolectric | StaticLayout 分页器、Room DAO、DataStore、PDFBox 文本提取、导入服务、隐藏书架流程、外部打开 Intent 与清单过滤器、电量广播提供器的注册/推送/注销 |
+| 单元测试（Android 依赖） | Robolectric | StaticLayout 分页器、页布局装箱不变量（独立页面布局高度 ≤ 分页可用高度、行数一致）、Room DAO、DataStore、PDFBox 文本提取、导入服务、隐藏书架流程、外部打开 Intent 与清单过滤器、电量广播提供器的注册/推送/注销 |
 | 集成测试 | Robolectric + 真实 Room/文件/解析器 | TXT/EPUB/PDF 导入 → 书架 → 打开 → 分页 → 进度保存/恢复 → 隐藏/解锁 → 删除；扫描 PDF 降级；外部打开 → 自动进入阅读器 |
 | UI 仪器测试 | Compose UI Test（需模拟器） | 书架渲染、密码对话、阅读器设置面板、翻页手势；作为可选验证 |
 | 黑盒验收 | 用户 + 模拟器 | 见 `docs/black-box-test-guide.md` |
@@ -1150,6 +1170,9 @@ stateDiagram-v2
     电量与时间同显同隐，顶栏切换不改变页高、页码或触发重排。
     图标填充比例 = clamp(percent, 0, 100) / 100：0% 不画填充、100% 填满内胆、越界值不溢出边框；
     图标按 14sp 随系统字体缩放，但小于 16sp 状态行高，不改变分页视口。
+17. 页尾完整性：任意 spec 下，每页用共享 `PageTextLayoutFactory` 构建的独立正文布局高度
+    ≤ 该页分页可用高度（章节首页扣除标题预留）；页面末尾换行裁剪后布局行数与章节布局一致；
+    24sp/2.0×/夜读/无衬线/24dp 的真机复现配置下不得再有半行被裁切。
 
 ---
 
@@ -1159,7 +1182,7 @@ stateDiagram-v2
 | --- | --- | --- |
 | PDFBox-Android 与 HyperOS/Android 16 兼容性 | PDF 文本提取失败 | 用真实设备/模拟器验证；失败时降级扫描页渲染；保留 `PdfRenderer` 独立路径 |
 | 全量分页耗时超预期 | 打开大书卡顿 | 后台分页 + 进度提示；后续可增量分页；性能测试 10MB TXT |
-| 字体测量与 Compose 渲染不一致 | 页尾截断/空白 | 使用同一字体/字号/行高参数；页面渲染基于 StaticLayout 页范围；真机视觉验收；必要时渲染层改用 StaticLayout 绘制 |
+| 字体测量与 Compose 渲染不一致 | 页尾截断/空白 | **已修复（M24）**：分页与正文绘制共用 `PageTextLayoutFactory`，正文用同一 `StaticLayout` 在 Canvas 上绘制；页面独立布局高度恒 ≤ 分页装箱高度；末尾换行裁剪；`PageTextLayoutTest` 覆盖多 spec 不变量；真机/模拟器视觉验收 |
 | 下拉手势与网格滚动冲突 | 误触发/无法触发 | `NestedScrollConnection` 只在顶部 overscroll 累计；阈值 = 屏高 1/2；需从屏幕中部或更上方起手；真机手势测试 |
 | 隐藏书架安全性被误解 | 用户误以为文件加密 | UI 与文档明确"界面隐藏，非文件加密" |
 | Room 正文体积膨胀 | 大书数据库变大 | 正文纯文本压缩空间有限；v1 接受；后续可外置文件或压缩 |

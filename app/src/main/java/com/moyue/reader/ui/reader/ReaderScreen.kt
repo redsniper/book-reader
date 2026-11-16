@@ -106,7 +106,6 @@ import com.moyue.reader.platform.pdf.PdfPageRenderer
 import com.moyue.reader.ui.settings.ReadingSettingsControls
 import com.moyue.reader.ui.theme.ReaderPalette
 import com.moyue.reader.ui.theme.palette
-import com.moyue.reader.ui.theme.toComposeFontFamily
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
@@ -288,6 +287,8 @@ fun ReaderScreen(
                             palette = palette,
                             contentWidthPx = contentWidthPx,
                             contentHeightPx = contentHeightPx,
+                            fontSizePx = fontSizePx,
+                            lineHeightPx = lineHeightPx,
                             onPageChanged = viewModel::onPageChanged,
                             onToggleChrome = viewModel::toggleChrome,
                         )
@@ -496,6 +497,8 @@ private fun ReaderTextContent(
     palette: ReaderPalette,
     contentWidthPx: Int,
     contentHeightPx: Int,
+    fontSizePx: Float,
+    lineHeightPx: Float,
     onPageChanged: (Int) -> Unit,
     onToggleChrome: () -> Unit,
 ) {
@@ -530,6 +533,9 @@ private fun ReaderTextContent(
                         settings = state.settings,
                         palette = palette,
                         pageHeight = pageHeight,
+                        contentWidthPx = contentWidthPx,
+                        fontSizePx = fontSizePx,
+                        lineHeightPx = lineHeightPx,
                         onToggleChrome = onToggleChrome,
                     )
                 }
@@ -569,6 +575,9 @@ private fun ReaderTextContent(
                             settings = state.settings,
                             palette = palette,
                             pageHeight = pageHeight,
+                            contentWidthPx = contentWidthPx,
+                            fontSizePx = fontSizePx,
+                            lineHeightPx = lineHeightPx,
                             onToggleChrome = onToggleChrome,
                         )
                     }
@@ -585,6 +594,9 @@ private fun ReaderTextPage(
     settings: ReaderSettings,
     palette: ReaderPalette,
     pageHeight: androidx.compose.ui.unit.Dp,
+    contentWidthPx: Int,
+    fontSizePx: Float,
+    lineHeightPx: Float,
     onToggleChrome: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -618,13 +630,16 @@ private fun ReaderTextPage(
                     page.start.coerceIn(0, chapter.text.length),
                     page.end.coerceIn(0, chapter.text.length),
                 )
-                Text(
-                    text = text,
+                // 正文绘制与分页共用同一个 StaticLayout 工厂：分页算出的页框高度必然
+                // 装得下这段文本，不会再出现 Compose Text 行高取整导致的页尾裁切。
+                ReaderPageText(
+                    pageText = text,
+                    fontFamily = settings.fontFamily,
+                    fontSizePx = fontSizePx,
+                    lineHeightPx = lineHeightPx,
+                    widthPx = contentWidthPx,
                     color = palette.text,
-                    fontFamily = settings.fontFamily.toComposeFontFamily(),
-                    fontSize = settings.fontSizeSp.sp,
-                    lineHeight = (settings.fontSizeSp * settings.lineHeightMultiplier).sp,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                 )
             }
         }
